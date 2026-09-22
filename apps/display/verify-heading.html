@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>VIS-1 Heading Verification Harness (dev-only)</title>
+    <style>
+      html, body, #root {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: #000000;
+      }
+      #legend {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        color: #C8D8F0;
+        font: 13px monospace;
+        background: rgba(0, 0, 0, 0.6);
+        padding: 4px 8px;
+        z-index: 10;
+        white-space: pre;
+      }
+      #error {
+        position: fixed;
+        top: 8px;
+        left: 8px;
+        right: 8px;
+        color: #ffffff;
+        background: #b00020;
+        font: 14px monospace;
+        padding: 8px;
+        z-index: 20;
+        display: none;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="canvas"></canvas>
+    <div id="legend"></div>
+    <div id="error"></div>
+    <script type="module" src="/src/verify/verifyHeading.ts"></script>
+  </body>
+</html>

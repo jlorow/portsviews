@@ -1,0 +1,51 @@
+node_modules/
+dist/
+.pnpm-store/
+*.exe
+*.log
+console-output.txt
+capture-console.py
+console-error.txt
+.vite/
+*.tsbuildinfo
+wave chat context.md
+dev-server.log
+dev-server-err.log
+.env
+.env.local
+server/.env
+server/.aisstream.lock
+# Cloudflare Pages local secrets for the landing function -- the local
+# equivalent of .env, holding RESEND_API_KEY. Path-qualified to match
+# server/.env above; the bare `.dev.vars` rule further down also covers it,
+# and both are kept deliberately so removing either still leaves the key
+# protected.
+landing/.dev.vars
+server/captures/
+*.ndjson
+*.jsonl
+
+# Throwaway investigation tooling, never production code and never shipped.
+server/tools/
+
+**/public/tiles/*.pmtiles
+# ...except VIS-9's Dover basemap, which SHIPS: it is the extract the
+# hardcoded BASEMAP_AREAS.dover pmtilesUrl asks for, so committing it is
+# what gives a fresh clone a coastline on the default area. 10,025,656
+# bytes, z0-11. The broad rule above is deliberately kept so every other
+# archive -- the rail Stockholm one and the prototypes' -- stays out.
+!apps/display/public/tiles/dover-z11.pmtiles
+
+# VIS-9 throwaway audit tooling (not production code)
+vis9-audit/
+
+# LANDING throwaway audit tooling (not production code)
+landing-audit/
+
+# LANDING/DEMO-2. Cloudflare Pages local development. These rules also exist
+# on feat/landing-page, and are duplicated here because switching back to
+# main leaves both directories behind in the working tree while the ignore
+# rules go with the branch -- which left a file holding a live API key
+# stageable on main.
+.dev.vars
+.wrangler/

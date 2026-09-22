@@ -1,0 +1,23 @@
+{
+  "name": "@wake/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "replay": "tsx watch src/replay.ts",
+    "capacity-capture": "tsx src/tools/capacityCapture.ts",
+    "tsc": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@wake/shared": "workspace:*",
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.12",
+    "@types/node": "^22.10.0",
+    "typescript": "~5.7.0"
+  }
+}

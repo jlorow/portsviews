@@ -1,0 +1,21 @@
+{
+  "name": "@wake/landing",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build:hero": "vite build --config vite.hero.config.ts",
+    "tsc": "tsc",
+    "prep:basemap": "tsx tools/buildHeroBasemap.ts",
+    "prep:replay": "tsx ../server/src/tools/buildHeroReplay.ts"
+  },
+  "dependencies": {
+    "@wake/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.0",
+    "vite": "^6.0.0",
+    "@mapbox/vector-tile": "2.0.5",
+    "pbf": "4.0.2"
+  }
+}

@@ -1,0 +1,282 @@
+/* Portsviews — shared stylesheet (LANDING-3).
+   One file for index, pricing, terms, refunds and privacy. Every rule that
+   was duplicated in four <style> blocks lives here once.
+
+   TYPE SYSTEM
+     Headings  Times New Roman, italic, 400. Hero display is 72px/72px; the
+               rest of the scale steps down from it (48 / 34 / 22) so section
+               headings read as large without every one of them being 72.
+     Body      Inter 300, 13px/21px, #9A9A9A. .lede and .emph brighten the
+               same face rather than changing it.
+
+   The dark/light CSS-variable structure is the one the pages already had;
+   both modes are recoloured to this system rather than a third palette
+   being invented. There is ONE accent colour: --accent. The former
+   --accent-orange is gone, so every accent button is the same colour. */
+
+:root {
+  --bg: #0B0B0C;
+  --bg-raised: #131315;
+  --heading: #F2F2F2;
+  --text: #E4E4E4;
+  --text-muted: #9A9A9A;
+  --accent: #35B4FF;
+  --btn-text: #0B0B0C;
+  --border: rgba(255, 255, 255, 0.12);
+  --rule: rgba(255, 255, 255, 0.08);
+}
+
+:root[data-theme="light"] {
+  --bg: #F4F3F0;
+  --bg-raised: #FBFAF8;
+  --heading: #14161A;
+  --text: #2A2D31;
+  --text-muted: #6B6F74;
+  --accent: #0B7FCC;
+  --btn-text: #F4F3F0;
+  --border: rgba(0, 0, 0, 0.14);
+  --rule: rgba(0, 0, 0, 0.09);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text-muted);
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  font-weight: 300;
+  font-size: 13px;
+  line-height: 21px;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* --- headings ---------------------------------------------------------- */
+
+h1, h2, h3 {
+  font-family: 'Times New Roman', Times, serif;
+  font-style: italic;
+  font-weight: 400;
+  color: var(--heading);
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+h1 { font-size: 48px; line-height: 52px; }
+h2 { font-size: 34px; line-height: 38px; }
+h3 { font-size: 22px; line-height: 27px; }
+
+/* The one genuinely display-sized heading on the site. */
+.display { font-size: 72px; line-height: 72px; letter-spacing: -0.02em; }
+
+@media (max-width: 720px) {
+  .display { font-size: 44px; line-height: 46px; }
+  h1 { font-size: 34px; line-height: 38px; }
+  h2 { font-size: 26px; line-height: 30px; }
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+p { margin: 0 0 12px; }
+
+/* Brighter body text, for the one or two lines per section that carry the
+   weight. Same face, same size; only the colour changes. */
+.emph { color: var(--text); }
+.lede { color: var(--text); font-size: 15px; line-height: 24px; }
+
+/* --- layout ------------------------------------------------------------ */
+
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+.narrow { max-width: 720px; margin: 0 auto; padding: 0 24px; }
+.tight { max-width: 640px; margin: 0 auto; padding: 0 24px; }
+section { padding-top: 88px; }
+.rule { border-top: 1px solid var(--rule); }
+
+/* --- header ------------------------------------------------------------ */
+
+header { display: flex; align-items: center; justify-content: space-between; padding: 28px 0; }
+
+/* A1: an <a> to index.html on every page, including index itself. */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  font-family: 'Times New Roman', Times, serif;
+  font-style: italic;
+  font-size: 21px;
+  color: var(--heading);
+  text-decoration: none;
+}
+.brand:hover { color: var(--heading); text-decoration: none; }
+.brand:hover svg { color: var(--accent); }
+.brand svg { transition: color 120ms ease; }
+
+.brand svg { width: 22px; height: 22px; }
+
+/* A4: the header's accent button is the SAME .btn.btn-accent as the hero's, at
+   full size. The gap carries the extra width instead of the button being
+   shrunk back down with inline overrides. */
+.navr { display: flex; align-items: center; gap: 20px; }
+.navr a { color: var(--text-muted); font-size: 13px; }
+.navr a:hover { color: var(--text); text-decoration: none; }
+.navr .btn { color: var(--btn-text); }
+.navr .btn:hover { color: var(--btn-text); text-decoration: none; }
+
+/* --- theme toggle (hand-drawn sun / moon, LANDING-3 A3) ---------------- */
+
+#theme-toggle {
+  background: none;
+  border: none;
+  padding: 4px;
+  margin: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  line-height: 0;
+  border-radius: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#theme-toggle:hover { color: var(--text); }
+
+/* Size only. THIS RULE MUST NOT SET display.
+   LANDING-4 A3: it used to read "#theme-toggle svg { ...; display: block }",
+   and that is why both icons rendered, one above the other, in both themes.
+   An id plus an element is specificity (1,0,1), where the theme rules below
+   were ":root .icon-moon" at (0,2,0), so the block won every time and
+   neither "display: none" was ever applied. It was never a flex/centering
+   problem and never an inline-style problem -- the icons carry no style
+   attribute at all.
+   The theme rules are id-scoped too now, so they out-specify anything that
+   could be written here, and themeToggle.test.ts resolves the real cascade
+   to prove exactly one icon wins per theme. */
+#theme-toggle svg { width: 20px; height: 20px; }
+
+/* Dark mode offers the sun (switch to light); light mode offers the moon.
+   Both icons are in the markup, so the right one shows before any script
+   runs. */
+#theme-toggle .icon-sun { display: block; }
+#theme-toggle .icon-moon { display: none; }
+:root[data-theme="light"] #theme-toggle .icon-sun { display: none; }
+:root[data-theme="light"] #theme-toggle .icon-moon { display: block; }
+
+/* --- buttons ----------------------------------------------------------- */
+
+.btn {
+  display: inline-block;
+  font-family: 'Inter', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 21px;
+  padding: 12px 26px;
+  border-radius: 2px;
+  border: none;
+  cursor: pointer;
+  text-align: center;
+}
+
+/* A5: ONE accent. Every accent button on the site uses this class. */
+.btn-accent { background: var(--accent); color: var(--btn-text); }
+.btn-accent:hover { text-decoration: none; opacity: 0.9; }
+.btn-quiet { background: var(--text); color: var(--bg); }
+
+.fineprint { font-size: 12px; color: var(--text-muted); }
+
+/* --- hero -------------------------------------------------------------- */
+
+.hero { text-align: center; padding: 48px 0 8px; }
+.hero p.lede { margin: 22px auto 0; max-width: 560px; }
+.cta-block { margin-top: 30px; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+
+.hero-frame { max-width: 1100px; margin: 44px auto 0; padding: 0 24px; }
+.hero-frame .frame-inner { border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+.hero-frame img, .hero-frame canvas { display: block; width: 100%; height: auto; }
+
+/* --- steps ------------------------------------------------------------- */
+
+.step { display: flex; gap: 24px; padding-bottom: 32px; }
+.step:last-child { padding-bottom: 0; }
+.step-num {
+  font-family: 'Times New Roman', Times, serif;
+  font-style: italic;
+  font-size: 34px;
+  line-height: 1;
+  color: var(--accent);
+  width: 44px;
+  flex-shrink: 0;
+}
+.step h3 { margin-bottom: 6px; }
+.step p { margin: 0; }
+
+/* --- feature list (A9) -------------------------------------------------- */
+
+.feature-list { list-style: none; margin: 0; padding: 0; }
+.feature-list li {
+  padding: 14px 0;
+  border-top: 1px solid var(--rule);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 21px;
+}
+.feature-list li:last-child { border-bottom: 1px solid var(--rule); }
+.feature-list li span { display: block; color: var(--text-muted); margin-top: 3px; }
+
+/* --- questions ---------------------------------------------------------- */
+
+.qa { border-top: 1px solid var(--rule); padding: 22px 0; }
+.qa:last-child { border-bottom: 1px solid var(--rule); }
+.qa .q { color: var(--text); font-weight: 500; margin-bottom: 8px; }
+.qa .a { margin: 0; }
+
+/* --- stay posted --------------------------------------------------------- */
+
+.stay-posted { text-align: center; }
+.stay-form { display: flex; gap: 8px; }
+.stay-form input {
+  flex-grow: 1;
+  padding: 11px 14px;
+  border-radius: 2px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+  font-weight: 300;
+  font-size: 13px;
+}
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+
+/* LANDING-5: the signup form's reply. Empty until something is said, so it
+   takes no vertical space on a page nobody has interacted with. */
+.form-status { min-height: 21px; margin: 10px 0 0; font-size: 12px; color: var(--text-muted); }
+.form-status.is-ok { color: var(--text); }
+.form-status.is-error { color: var(--accent); }
+.stay-form button[disabled] { opacity: 0.6; cursor: default; }
+
+/* --- footer -------------------------------------------------------------- */
+
+footer { margin-top: 96px; padding: 28px 0 40px; border-top: 1px solid var(--rule); }
+.foot-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; }
+.foot-links { display: flex; gap: 20px; }
+.foot-links a { color: var(--text-muted); }
+.legal-line { font-size: 12px; color: var(--text-muted); margin: 18px 0 0; }
+
+/* --- document pages (terms / refunds / privacy) --------------------------- */
+
+.doc { max-width: 680px; margin: 0 auto; padding: 28px 24px 80px; }
+/* A1/A2: the document pages now carry the same brand mark as the site
+   header, so this row needs the same spacing treatment. */
+.doc-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 12px 0 28px; }
+.back { font-size: 13px; color: var(--text-muted); }
+.doc h1 { margin: 12px 0 4px; }
+.doc h2 { font-size: 22px; line-height: 27px; margin: 36px 0 14px; }
+.doc ol, .doc ul { padding-left: 20px; margin: 0 0 12px; }
+.doc li { margin-bottom: 10px; color: var(--text); }
+.body-c { margin: 0 0 24px; }
+.effective { font-size: 12px; color: var(--text-muted); margin: 0 0 36px; }
+.foot { font-size: 12px; color: var(--text-muted); margin-top: 48px; border-top: 1px solid var(--rule); padding-top: 20px; }
+.foot a { color: var(--text-muted); }
+.disc { font-size: 12px; color: var(--text-muted); margin-top: 12px; }

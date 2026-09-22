@@ -1,0 +1,221 @@
+import { config } from 'dotenv'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import {
+  DEFAULT_CONFIG,
+  DEMO_AREAS,
+  parseAisSource,
+  parseDemoArea,
+  resolveSourceConfig,
+} from '@wake/shared'
+import { acquireLock } from './lock.ts'
+import { registerShutdown } from './shutdown.ts'
+import { createCaptureLogger } from './capture.ts'
+import {
+  createAisStreamClient,
+  type AisStreamMessage,
+  FILTER_MESSAGE_TYPES,
+} from './aisstream.ts'
+import { createPositionMap, createStaticMap } from './caches.ts'
+import { createBroadcastServer } from './broadcast.ts'
+import { processEnvelope, type PipelineContext } from './pipeline.ts'
+
+// pnpm --filter runs this script with cwd set to server/, not the repo
+// root, so bare `dotenv/config` (which only checks process.cwd()) would
+// never find the root .env. Resolve it explicitly instead.
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+config({ path: path.resolve(__dirname, '..', '..', '.env') })
+
+// DEMO-1: demo area and AIS source come from settings. Invalid values or
+// a missing key for the chosen source refuse to start with a clear
+// message naming the VARIABLE -- never its value -- and do so BEFORE
+// acquireLock(), so a refused start never leaves a stale PID lockfile.
+const WAKE_AREA_RAW = process.env.WAKE_AREA
+const WAKE_AIS_SOURCE_RAW = process.env.WAKE_AIS_SOURCE
+
+const areaKey = parseDemoArea(WAKE_AREA_RAW)
+if (areaKey === null) {
+  console.error(
+    `[Wake] Invalid WAKE_AREA ${JSON.stringify(WAKE_AREA_RAW)} -- expected one of: ${Object.keys(DEMO_AREAS).join(', ')}. Refusing to start.`,
+  )
+  process.exit(1)
+}
+
+const aisSource = parseAisSource(WAKE_AIS_SOURCE_RAW)
+if (aisSource === null) {
+  console.error(
+    `[Wake] Invalid WAKE_AIS_SOURCE ${JSON.stringify(WAKE_AIS_SOURCE_RAW)} -- expected 'aisstream' or 'aiscast'. Refusing to start.`,
+  )
+  process.exit(1)
+}
+
+const sourceConfig = resolveSourceConfig(
+  {
+    aisstreamApiKey: process.env.AISSTREAM_API_KEY,
+    aiscastToken: process.env.AISCAST_TOKEN,
+  },
+  aisSource,
+)
+if ('error' in sourceConfig) {
+  console.error(`[Wake] ${sourceConfig.error}`)
+  process.exit(1)
+}
+
+console.log(`[Wake] Area: ${areaKey} · Source: ${aisSource}`)
+
+const area = DEMO_AREAS[areaKey]
+
+acquireLock()
+
+const HEARTBEAT_MS = 60000
+const BROADCAST_PORT = Number(process.env.WAKE_BROADCAST_PORT ?? 8080)
+
+interface BoxBounds {
+  minLat: number
+  maxLat: number
+  minLon: number
+  maxLon: number
+}
+
+interface BoxStat {
+  label: string
+  bounds: BoxBounds
+  messages: number
+  uniqueMmsis: Set<number>
+  typeCounts: Record<string, number>
+}
+
+// Corner order in a box list is documentation-convention (NW, SE), not
+// guaranteed min/max — normalise here rather than assume which corner is
+// which, so attribution doesn't silently break if the convention changes.
+// Kept for S3.2's multi-region pool, which will read boxStats directly —
+// this story doesn't log per-box numbers.
+//
+// DEMO-1: boxes come from the ACTIVE area, not a module constant, so
+// per-box attribution keeps matching what was actually subscribed (same
+// rationale as the defaults note in aisstream.ts). With the default area
+// this is identical to the previous BOUNDING_BOXES/BOUNDING_BOX_LABELS.
+function buildBoxStats(boxes: number[][][], labels: string[]): BoxStat[] {
+  return boxes.map(([[lat1, lon1], [lat2, lon2]], i) => ({
+    label: labels[i] ?? `BOX_${i}`,
+    bounds: {
+      minLat: Math.min(lat1, lat2),
+      maxLat: Math.max(lat1, lat2),
+      minLon: Math.min(lon1, lon2),
+      maxLon: Math.max(lon1, lon2),
+    },
+    messages: 0,
+    uniqueMmsis: new Set<number>(),
+    typeCounts: {},
+  }))
+}
+
+const boxStats: BoxStat[] = buildBoxStats(area.boundingBoxes, [areaKey.toUpperCase()])
+
+const processStartedAt = Date.now()
+let messagesThisMinute = 0
+const uniqueMmsisSinceStart = new Set<number>()
+
+// Documentation bug: aisstream.io's docs show MetaData.Latitude and
+// MetaData.Longitude, capitalised. Live envelopes emit them lowercase —
+// "latitude"/"longitude" — instead. Confusingly, the inner
+// Message.PositionReport object DOES use the capitalised Latitude/Longitude
+// the docs describe: both casings coexist at different nesting levels of
+// the same envelope. Detect the real key from live data rather than trust
+// either casing.
+//
+// Also undocumented: MetaData.MMSI_String arrives as an unquoted JSON
+// number despite its name, not a pre-converted string — S3.3 must not
+// assume otherwise.
+const DOCUMENTED_LAT_KEY = 'Latitude'
+const DOCUMENTED_LON_KEY = 'Longitude'
+const LAT_KEYS = [DOCUMENTED_LAT_KEY, 'latitude', 'LATITUDE', 'lat', 'Lat']
+const LON_KEYS = [DOCUMENTED_LON_KEY, 'longitude', 'LONGITUDE', 'lon', 'Lon']
+let loggedCoordFieldNames = false
+
+function extractCoords(meta: AisStreamMessage['MetaData']): { lat: number; lon: number } | undefined {
+  if (!meta) return undefined
+
+  const latKey = LAT_KEYS.find((k) => typeof meta[k] === 'number')
+  const lonKey = LON_KEYS.find((k) => typeof meta[k] === 'number')
+  if (latKey === undefined || lonKey === undefined) return undefined
+
+  if (!loggedCoordFieldNames) {
+    loggedCoordFieldNames = true
+    const matchesDocs = latKey === DOCUMENTED_LAT_KEY && lonKey === DOCUMENTED_LON_KEY
+    console.log(
+      `[Wake] Coordinate fields confirmed from live data: latitude="${latKey}" longitude="${lonKey}" ` +
+        `(matches documented Latitude/Longitude: ${matchesDocs})`,
+    )
+  }
+
+  return { lat: meta[latKey] as number, lon: meta[lonKey] as number }
+}
+
+function findBox(coords: { lat: number; lon: number }): BoxStat | undefined {
+  return boxStats.find(
+    (box) =>
+      coords.lat >= box.bounds.minLat &&
+      coords.lat <= box.bounds.maxLat &&
+      coords.lon >= box.bounds.minLon &&
+      coords.lon <= box.bounds.maxLon,
+  )
+}
+
+const captureLogger = createCaptureLogger()
+
+const positionMap = createPositionMap()
+const staticMap = createStaticMap()
+const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap)
+
+const pipelineCtx: PipelineContext = {
+  positionMap,
+  staticMap,
+  clients: broadcastServer.clients,
+  removeSec: DEFAULT_CONFIG.removeSec,
+}
+
+// No onDisconnected handler: display clients stay connected and are
+// never closed because of an AIS-side outage. A dropped AIS connection
+// simply means onMessage stops firing until aisstream.ts's own backoff
+// reconnects it -- broadcasting goes quiet with no new code needed, and
+// no explicit "AIS down" state is sent to clients (S1.7's spec only
+// distinguishes connected-to-server from disconnected-from-server).
+const client = createAisStreamClient({
+  boundingBoxes: area.boundingBoxes,
+  filterMessageTypes: FILTER_MESSAGE_TYPES,
+}, {
+  onMessage: (message: AisStreamMessage) => {
+    messagesThisMinute++
+
+    const mmsi = message.MetaData?.MMSI
+    if (typeof mmsi === 'number') {
+      uniqueMmsisSinceStart.add(mmsi)
+    }
+
+    const coords = extractCoords(message.MetaData)
+    const matchedBox = coords ? findBox(coords) : undefined
+
+    if (matchedBox) {
+      matchedBox.messages++
+      matchedBox.typeCounts[message.MessageType] = (matchedBox.typeCounts[message.MessageType] ?? 0) + 1
+      if (typeof mmsi === 'number') {
+        matchedBox.uniqueMmsis.add(mmsi)
+      }
+    }
+
+    processEnvelope(message, pipelineCtx, Date.now())
+  },
+}, captureLogger, undefined, { url: sourceConfig.url, apiKey: sourceConfig.apiKey })
+
+registerShutdown(client, captureLogger, broadcastServer.clients)
+
+client.connect()
+
+setInterval(() => {
+  const uptimeSec = Math.round((Date.now() - processStartedAt) / 1000)
+  console.log(
+    `[Wake] alive — vessels: ${uniqueMmsisSinceStart.size}  msgs/min: ${messagesThisMinute}  uptime: ${uptimeSec}s`,
+  )
+  messagesThisMinute = 0
+}, HEARTBEAT_MS)

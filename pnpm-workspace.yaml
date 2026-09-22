@@ -1,0 +1,6 @@
+packages:
+  - 'apps/*'
+  - 'server'
+  - 'shared'
+  - 'landing'
+  - 'marketing'
