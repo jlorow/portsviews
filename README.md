@@ -16,9 +16,10 @@ display is designed to be bounced off a mirror onto a ceiling.*
 ## What you need
 
 - **Node.js 20 or newer.** Check with `node --version`.
-- **pnpm 9 or newer.** If you do not have it, the one-liner is
-  `corepack enable && corepack prepare pnpm@latest --activate` — Corepack comes
-  with Node.
+- **pnpm 9 or newer.** Install it with `npm install -g pnpm`. Alternatively,
+  use `corepack enable && corepack prepare pnpm@latest --activate` — Corepack
+  comes with Node. On Windows, enabling Corepack may require an administrator
+  terminal.
 - **A free AISstream.io API key.** Instructions below; it takes a minute and
   costs nothing.
 - A screen. A projector is nicer, but any monitor works.
@@ -34,6 +35,8 @@ cd portsviews
 pnpm install
 
 # 3. Put your free AISstream key in a .env file at the top level
+# On Windows, use Notepad or your code editor instead of echo: older Windows
+# PowerShell can save redirected files in a format the server cannot read.
 echo "AISSTREAM_API_KEY=your-key-here" > .env
 
 # 4. Start the data server (leave this running)
@@ -42,6 +45,9 @@ pnpm --filter @wake/server start
 # 5. In a SECOND terminal, start the display
 pnpm --filter display dev
 ```
+
+If `pnpm install` reports ignored build scripts for esbuild, run
+`pnpm approve-builds` and approve esbuild.
 
 Then open **http://localhost:5173/** in a browser. Within a minute or two you
 should see ships appear and start moving.
