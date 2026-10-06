@@ -3,4 +3,8 @@ packages:
   - 'server'
   - 'shared'
   - 'landing'
-  - 'marketing'
+# esbuild's install step is approved explicitly (pnpm 11+ reads allowBuilds; older pnpm reads onlyBuiltDependencies)
+allowBuilds:
+  esbuild: true
+onlyBuiltDependencies:
+  - esbuild

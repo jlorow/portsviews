@@ -2,11 +2,11 @@
   "name": "wake",
   "private": true,
   "scripts": {
-    "dev:display": ".\\pnpm.exe --filter display dev",
-    "build:display": ".\\pnpm.exe --filter display build",
-    "typecheck": ".\\pnpm.exe --filter display tsc --noEmit",
-    "dev:server": ".\\pnpm.exe --filter @wake/server dev",
-    "typecheck:server": ".\\pnpm.exe --filter @wake/server tsc --noEmit"
+    "dev:display": "pnpm --filter display dev",
+    "build:display": "pnpm --filter display build",
+    "typecheck": "pnpm --filter display tsc --noEmit",
+    "dev:server": "pnpm --filter @wake/server dev",
+    "typecheck:server": "pnpm --filter @wake/server tsc --noEmit"
   },
   "devDependencies": {
     "tsx": "^4.23.13"
