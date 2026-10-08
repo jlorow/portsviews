@@ -155,6 +155,19 @@ class FakeCanvas {
 }
 
 g.HTMLCanvasElement = FakeCanvas
+class FakePath2D {
+  moveTo() {}
+  lineTo() {}
+  bezierCurveTo() {}
+  quadraticCurveTo() {}
+  arc() {}
+  ellipse() {}
+  rect() {}
+  roundRect() {}
+  closePath() {}
+  addPath() {}
+}
+g.Path2D = FakePath2D
 const heroCanvas = new FakeCanvas()
 let createdCanvases = 0
 g.document = {

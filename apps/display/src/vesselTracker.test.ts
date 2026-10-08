@@ -1,3 +1,4 @@
+import './canvas/path2dShim'
 import type { VesselFix, VesselState, VesselType, TrackPoint, DisplayConfig } from '@wake/shared'
 import { DEFAULT_CONFIG, GLYPH_SCALES, LABEL_SIZES, UNKNOWN_SCALES, SWEEP_PERIODS, nextGlyphScale } from '@wake/shared'
 import type { ClientVesselEntry } from './wakeSocket'
@@ -34,6 +35,7 @@ function assert(condition: boolean, label: string): void {
 function createMockCtx() {
   const calls: string[] = []
   let fillCount = 0
+  let pathFillCount = 0
   let arcCount = 0
   let bezierCount = 0
   let strokeCount = 0
@@ -70,6 +72,7 @@ function createMockCtx() {
       calls.push(`translate(${x},${y})`)
     },
     rotate: (a: number) => calls.push(`rotate(${a})`),
+    scale: (x: number, y: number) => calls.push(`scale(${x},${y})`),
     beginPath: () => calls.push('beginPath'),
     moveTo: (x: number, y: number) => calls.push(`moveTo(${x},${y})`),
     lineTo: (x: number, y: number) => calls.push(`lineTo(${x},${y})`),
@@ -82,16 +85,21 @@ function createMockCtx() {
       calls.push(`arc(${args.join(',')})`)
     },
     closePath: () => calls.push('closePath'),
-    fill: () => {
+    fill: (pathOrRule?: Path2D | CanvasFillRule) => {
       fillCount++
       fills.push({ fillStyle: currentFillStyle, globalAlpha: currentAlpha })
-      calls.push('fill')
+      if (pathOrRule instanceof Path2D) {
+        pathFillCount++
+        calls.push(`fill(path:${currentFillStyle})`)
+      } else {
+        calls.push('fill')
+      }
     },
     fillRect: (x: number, y: number, w: number, h: number) => calls.push(`fillRect(${x},${y},${w},${h})`),
-    stroke: () => {
+    stroke: (path?: Path2D) => {
       strokeCount++
       strokes.push({ strokeStyle: currentStrokeStyle, lineWidth: currentLineWidth })
-      calls.push('stroke')
+      calls.push(path ? `stroke(path:${currentStrokeStyle})` : 'stroke')
     },
     // VIS-6: range rings use setLineDash, hero glow uses
     // createRadialGradient plus ctx.shadowBlur/shadowColor -- none of
@@ -139,6 +147,7 @@ function createMockCtx() {
     letterSpacing: '0px',
     _calls: calls,
     _fillCount: () => fillCount,
+    _pathFillCount: () => pathFillCount,
     _arcCount: () => arcCount,
     _bezierCount: () => bezierCount,
     _strokeCount: () => strokeCount,
@@ -157,6 +166,7 @@ function createMockCtx() {
   return mockCtx as unknown as CanvasRenderingContext2D & {
     _calls: string[]
     _fillCount: () => number
+    _pathFillCount: () => number
     _arcCount: () => number
     _bezierCount: () => number
     _strokeCount: () => number
@@ -310,7 +320,8 @@ function baseRenderContext(overrides?: Partial<RenderContext>): RenderContext {
   onFixArrived(tracked2, fix('555555555', IN_VIEW_LAT, IN_VIEW_LON, 1000))
   clientState.set('555555555', { vesselType: 'cargo' })
   renderFrame(tracked2, clientState, ctxCargo, baseRenderContext({ nowMs: 1000, config: { ...DEFAULT_CONFIG, legendEnabled: false, rangeRingsEnabled: false, sweepPeriodSec: 0, stoppedAsDot: false } }))
-  assert(ctxCargo._bezierCount() > 0, 'known-type: cargo renders via its hull (bezier), not the unknown arc')
+  assert(ctxCargo._pathFillCount() >= 3, 'known-type: cargo draws its cached hull and detail paths')
+  assert(ctxCargo._calls.includes('scale(45,45)'), 'known-type: cargo retains its expected half-length')
   assert(ctxCargo._arcCount() === 0, 'known-type: no unknown-arc drawn for a typed vessel')
 }
 
@@ -559,16 +570,13 @@ function baseRenderContext(overrides?: Partial<RenderContext>): RenderContext {
 // in Map insertion order, so a trail painted over its own glyph and
 // stacking depended on discovery history.
 //
-// Vessel identity in the recorded call log is read from the hull's own
-// moveTo(0, -hh) call -- hullPath's first drawing call, whose y-argument
-// is a literal function of baseSize alone (hh = baseSize * a per-type
-// constant), independent of screen position or rotation. This avoids
-// re-deriving eased/projected coordinates just to tell vessels apart.
+// Vessel identity is read from the recorded uniform scale, which equals
+// the exact half-length supplied to its cached path geometry.
 {
   const vesselDefs: { mmsi: string; type: VesselType; lat: number; lon: number }[] = [
-    { mmsi: '900000001', type: 'ferry', lat: 51.10, lon: 1.45 }, // baseSize 90 -> hh 36
-    { mmsi: '900000002', type: 'cargo', lat: 51.12, lon: 1.47 }, // baseSize 120 -> hh 60
-    { mmsi: '900000003', type: 'tanker', lat: 51.14, lon: 1.49 }, // baseSize 110 -> hh 52.25
+    { mmsi: '900000001', type: 'ferry', lat: 51.10, lon: 1.45 },
+    { mmsi: '900000002', type: 'cargo', lat: 51.12, lon: 1.47 },
+    { mmsi: '900000003', type: 'tanker', lat: 51.14, lon: 1.49 },
   ]
 
   function runOrder(insertOrder: typeof vesselDefs) {
@@ -596,12 +604,12 @@ function baseRenderContext(overrides?: Partial<RenderContext>): RenderContext {
   const ctx1 = runOrder(vesselDefs)
   const ctx2 = runOrder([vesselDefs[2], vesselDefs[0], vesselDefs[1]])
 
-  const hullMoveTos = (ctx: ReturnType<typeof runOrder>) => ctx._calls.filter((c) => c.startsWith('moveTo(0,-'))
-  const order1 = hullMoveTos(ctx1)
-  const order2 = hullMoveTos(ctx2)
-  const expectedOrder = ['moveTo(0,-60)', 'moveTo(0,-52.25)', 'moveTo(0,-36)'] // cargo, tanker, ferry
+  const glyphScales = (ctx: ReturnType<typeof runOrder>) => ctx._calls.filter((c) => c.startsWith('scale('))
+  const order1 = glyphScales(ctx1)
+  const order2 = glyphScales(ctx2)
+  const expectedOrder = ['scale(60,60)', 'scale(52.25,52.25)', 'scale(36,36)']
 
-  assert(order1.length === 3, `draw-order: three hull moveTo calls recorded (got ${order1.length})`)
+  assert(order1.length === 3, `draw-order: three typed hull scales recorded (got ${order1.length})`)
   assert(
     JSON.stringify(order1) === JSON.stringify(expectedOrder),
     `draw-order: glyphs stack largest-hull-first -- cargo, tanker, ferry (got ${JSON.stringify(order1)})`,
@@ -612,9 +620,10 @@ function baseRenderContext(overrides?: Partial<RenderContext>): RenderContext {
   )
 
   const lastStrokeIndex = ctx1._calls.lastIndexOf('stroke')
-  const firstFillIndex = ctx1._calls.indexOf('fill')
+  const firstFillIndex = ctx1._calls.findIndex((call) => call.startsWith('fill(path:'))
   assert(lastStrokeIndex >= 0, 'draw-order: at least one trail stroke recorded')
   assert(firstFillIndex >= 0, 'draw-order: at least one glyph fill recorded')
+  assert(ctx1._calls.some((call) => call.startsWith('stroke(path:')), 'draw-order: typed outline strokes are recorded separately')
   assert(
     lastStrokeIndex < firstFillIndex,
     `draw-order: every trail stroke comes before every glyph fill (lastStroke=${lastStrokeIndex}, firstFill=${firstFillIndex})`,
@@ -630,14 +639,10 @@ function baseRenderContext(overrides?: Partial<RenderContext>): RenderContext {
   )
 }
 
-// Scenario: renderFrame scales the baseSize passed to drawGlyph by
-// config.glyphScale. One cargo vessel (baseSize 120, hh = baseSize * 0.5
-// inside drawCargo) at canvasWidth 1920, so glyphs.ts's own
-// canvasWidth/1920 scaling is identity and the recorded hull moveTo's
-// y-argument directly reflects 120 * glyphScale * 0.5. Hardcoded expected
-// values, tolerance 1e-9 for float rounding.
+// Scenario: renderFrame scales the exact half-length passed to cached
+// cargo geometry by config.glyphScale.
 {
-  function hullMoveToRawY(glyphScale: 0.75 | 0.3): number {
+  function halfLength(glyphScale: 0.75 | 0.3): number {
     const tracked = createTrackedVesselMap()
     const clientState = new Map<string, ClientVesselEntry>()
     const mmsi = '900000099'
@@ -645,15 +650,15 @@ function baseRenderContext(overrides?: Partial<RenderContext>): RenderContext {
     onFixArrived(tracked, fix(mmsi, IN_VIEW_LAT, IN_VIEW_LON, 1000))
     const ctx = createMockCtx()
     renderFrame(tracked, clientState, ctx, baseRenderContext({ nowMs: 1000, config: { ...DEFAULT_CONFIG, legendEnabled: false, glyphScale, stoppedAsDot: false } }))
-    const call = ctx._calls.find((c) => c.startsWith('moveTo(0,-'))
-    if (!call) throw new Error('no hull moveTo call recorded')
-    return Number(call.slice('moveTo(0,'.length, -1)) // e.g. "moveTo(0,-45)" -> -45
+    const call = ctx._calls.find((c) => c.startsWith('scale('))
+    if (!call) throw new Error('no glyph scale call recorded')
+    return Number(call.slice('scale('.length, call.indexOf(',')))
   }
 
-  const y75 = hullMoveToRawY(0.75)
-  const y30 = hullMoveToRawY(0.3)
-  assert(Math.abs(y75 - -45) < 1e-9, `glyphScale 0.75 records hull moveTo(0,-45) (got ${y75})`)
-  assert(Math.abs(y30 - -18) < 1e-9, `glyphScale 0.3 records hull moveTo(0,-18) (got ${y30})`)
+  const y75 = halfLength(0.75)
+  const y30 = halfLength(0.3)
+  assert(Math.abs(y75 - 45) < 1e-9, `glyphScale 0.75 records half-length 45 (got ${y75})`)
+  assert(Math.abs(y30 - 18) < 1e-9, `glyphScale 0.3 records half-length 18 (got ${y30})`)
 }
 
 // VIS-6 helper: parses the mock's "arc(x,y,r,start,end)" strings into
@@ -701,8 +706,8 @@ function parseArcCalls(calls: string[]): { x: number; y: number; r: number }[] {
 // (0.75). Two cargo vessels (baseSize 120): 'HERO0000A' moving (sogKn 10,
 // eligible, the only eligible candidate -- always the hero) and
 // 'NONHERO0A' stopped (sogKn 0, ineligible, drawn at glyphScale instead).
-// hh = actualSize * 0.5 inside drawCargo, canvasWidth 1920 so glyphs.ts's
-// own scaling is identity: hero 120*1.0*0.5=60, non-hero 120*0.75*0.5=45.
+// Half-length at canvasWidth 1920 is 120*1.0*0.5=60 for the hero and
+// 120*0.75*0.5=45 for the non-hero.
 {
   const tracked = createTrackedVesselMap()
   const clientState = new Map<string, ClientVesselEntry>()
@@ -714,8 +719,8 @@ function parseArcCalls(calls: string[]): { x: number; y: number; r: number }[] {
   const ctx = createMockCtx()
   renderFrame(tracked, clientState, ctx, baseRenderContext({ nowMs: 1000, config: { ...DEFAULT_CONFIG, legendEnabled: false, stoppedAsDot: false } }))
 
-  assert(ctx._calls.includes('moveTo(0,-60)'), `hero-size: hero cargo (heroScale 1.0) records hull moveTo(0,-60) (calls: ${JSON.stringify(ctx._calls.filter((c) => c.startsWith('moveTo(0,-')))})`)
-  assert(ctx._calls.includes('moveTo(0,-45)'), `hero-size: non-hero cargo (glyphScale 0.75) records hull moveTo(0,-45) (calls: ${JSON.stringify(ctx._calls.filter((c) => c.startsWith('moveTo(0,-')))})`)
+  assert(ctx._calls.includes('scale(60,60)'), 'hero-size: hero cargo uses half-length 60')
+  assert(ctx._calls.includes('scale(45,45)'), 'hero-size: non-hero cargo uses half-length 45')
 }
 
 // Scenario: VIS-6 glow -- 5 eligible vessels of 5 distinct types (so
@@ -768,14 +773,14 @@ function parseArcCalls(calls: string[]): { x: number; y: number; r: number }[] {
   const ctx = createMockCtx()
   renderFrame(tracked, clientState, ctx, baseRenderContext({ nowMs: 1000, config: { ...DEFAULT_CONFIG, legendEnabled: false, glowEnabled: false, stoppedAsDot: false } }))
 
-  function fillIndexAfter(calls: string[], marker: string): number {
+  function pathFillIndexAfter(calls: string[], marker: string): number {
     const markerIndex = calls.indexOf(marker)
     if (markerIndex < 0) throw new Error(`marker ${marker} not found`)
-    return calls.indexOf('fill', markerIndex)
+    return calls.findIndex((call, index) => index > markerIndex && call.startsWith('fill(path:'))
   }
 
-  const nonHeroFillIndex = fillIndexAfter(ctx._calls, 'moveTo(0,-45)')
-  const heroFillIndex = fillIndexAfter(ctx._calls, 'moveTo(0,-60)')
+  const nonHeroFillIndex = pathFillIndexAfter(ctx._calls, 'scale(45,45)')
+  const heroFillIndex = pathFillIndexAfter(ctx._calls, 'scale(60,60)')
   assert(nonHeroFillIndex >= 0 && heroFillIndex >= 0, 'hero-draw-order: both glyph fills recorded')
   assert(
     nonHeroFillIndex < heroFillIndex,
@@ -935,8 +940,8 @@ function buildLongTrack(mmsi: string): { state: VesselState; nowMs: number } {
     config: { ...DEFAULT_CONFIG, legendEnabled: false, sweepPeriodSec: 0, rangeRingsEnabled: false, trailLength: 'short', labelSize: 'off' },
   }))
   assert(
-    ctx._strokeCount() === 119,
-    `hero-trail: a hero with a 150-point track draws 119 trail segments regardless of config.trailLength='short' (got ${ctx._strokeCount()})`,
+    ctx._trailStrokeCount() === 119,
+    `hero-trail: a hero with a 150-point track draws 119 trail segments regardless of config.trailLength='short' (got ${ctx._trailStrokeCount()})`,
   )
 }
 
@@ -1180,12 +1185,13 @@ function arcRadius(calls: string[]): number | null {
 // stopped, >= 0.5 is not. 0.5 itself draws a hull.
 {
   const ctx = drawOneTypedVessel('cargo', 0.5)
-  assert(ctx._bezierCount() > 0, `dot-boundary: cargo at exactly 0.5kn draws its hull (bezier count ${ctx._bezierCount()})`)
+  assert(ctx._pathFillCount() >= 3, `dot-boundary: cargo at exactly 0.5kn draws hull and details (${ctx._pathFillCount()} path fills)`)
+  assert(ctx._calls.includes('scale(45,45)'), 'dot-boundary: cargo at exactly 0.5kn keeps the typed hull size')
   assert(ctx._arcCount() === 0, `dot-boundary: cargo at exactly 0.5kn draws no dot arc (got ${ctx._arcCount()})`)
 
   const below = drawOneTypedVessel('cargo', 0.49999)
   assert(below._arcCount() === 1, `dot-boundary: cargo just below 0.5kn draws a dot (got ${below._arcCount()} arcs)`)
-  assert(below._bezierCount() === 0, 'dot-boundary: cargo just below 0.5kn draws no hull')
+  assert(below._pathFillCount() === 0, 'dot-boundary: cargo just below 0.5kn draws no hull paths')
 }
 
 // Scenario: a sentinel-zeroed vessel (S3.3 zeroes BOTH sogKn and cogDeg
@@ -1229,7 +1235,7 @@ function arcRadius(calls: string[]): number | null {
 {
   for (const sogKn of [0, 0.3, 0.49999]) {
     const ctx = drawOneTypedVessel('ferry', sogKn, { stoppedAsDot: false })
-    assert(ctx._bezierCount() > 0, `dot-off: ferry at ${sogKn}kn draws its hull with stoppedAsDot false (bezier ${ctx._bezierCount()})`)
+    assert(ctx._pathFillCount() >= 3, `dot-off: ferry at ${sogKn}kn draws hull and details with stoppedAsDot false`)
     assert(ctx._arcCount() === 0, `dot-off: ferry at ${sogKn}kn draws no dot with stoppedAsDot false (arcs ${ctx._arcCount()})`)
   }
 }
@@ -1919,24 +1925,18 @@ function drawOneUnknownVessel(sogKn: number, cogDeg: number) {
   )
 }
 
-// Scenario: a MOVING, typed vessel's hull is untouched -- no outline at
-// all. This is the boundary the reverted "stroke outline on glyphs"
-// correction is about; A11 must not reach typed hulls.
+// Scenario: a MOVING, typed vessel receives the same single path outline.
 {
   const ctx = drawOneTypedVessel('cargo', 12)
-  assert(ctx._bezierCount() > 0, `a11-hull: a moving cargo draws its hull (bezier ${ctx._bezierCount()})`)
+  assert(ctx._pathFillCount() >= 3, 'a11-hull: a moving cargo draws hull and detail paths')
   assert(
-    ctx._strokes().length === 0,
-    `a11-hull: a moving typed hull records no stroke whatsoever (got ${JSON.stringify(ctx._strokes())})`,
-  )
-  assert(
-    ctx._calls.every((c) => c !== 'stroke'),
-    `a11-hull: and no stroke call in its sequence (got ${JSON.stringify(ctx._calls.filter((c) => c === 'stroke'))})`,
+    ctx._calls.filter((call) => call === 'stroke(path:#0A0E14)').length === 1,
+    'a11-hull: a moving typed hull strokes its silhouette once in the dark outline color',
   )
 }
 
-// Scenario: the outline scales with the canvas, like every other width in
-// this codebase. At canvasWidth 960, s = 0.5.
+// Scenario: the typed hull outline scales with the canvas under the
+// half-length transform. At canvasWidth 960, the final outline is 0.5px.
 {
   const tracked = createTrackedVesselMap()
   const clientState = new Map<string, ClientVesselEntry>()
@@ -1955,23 +1955,29 @@ function drawOneUnknownVessel(sogKn: number, cogDeg: number) {
       rangeRingsEnabled: false,
       sweepPeriodSec: 0,
       heroesEnabled: false,
+      stoppedAsDot: false,
     },
   }))
   const strokes = ctx._strokes()
+  const halfLength = 110 * 0.75 * (960 / 1920) * 0.475
   assert(
-    strokes.length === 1 && Math.abs(strokes[0].lineWidth - 0.5) < 1e-9,
-    `a11-scale: lineWidth 0.5 at canvasWidth 960 (got ${JSON.stringify(strokes)})`,
+    strokes.length === 1 && Math.abs(strokes[0].lineWidth - 0.5 / halfLength) < 1e-9,
+    `a11-scale: normalized lineWidth yields 0.5px at canvasWidth 960 (got ${JSON.stringify(strokes)})`,
+  )
+  assert(
+    ctx._calls.includes('stroke(path:#0A0E14)'),
+    'a11-scale: the scaled outline strokes the cached hull path',
   )
 }
 
 // Scenario: stoppedAsDot false is unaffected -- that vessel draws its
-// rotated hull, and a hull takes no outline.
+// rotated hull and the required single dark outline.
 {
   const ctx = drawOneTypedVessel('ferry', 0, { stoppedAsDot: false })
-  assert(ctx._bezierCount() > 0, 'a11-off: stoppedAsDot false still draws the hull')
+  assert(ctx._pathFillCount() >= 3, 'a11-off: stoppedAsDot false still draws hull and detail paths')
   assert(
-    ctx._strokes().length === 0,
-    `a11-off: and that hull takes no outline (got ${JSON.stringify(ctx._strokes())})`,
+    ctx._calls.filter((call) => call.startsWith('stroke(path:')).length === 1,
+    'a11-off: and that hull takes exactly one path outline',
   )
 }
 

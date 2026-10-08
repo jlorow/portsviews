@@ -4,6 +4,12 @@ import {
   NOTABLE_COLOR,
   DARK_OUTLINE_COLOR,
 } from '@wake/shared'
+import {
+  getTypedGlyphShape,
+  mixedGlyphColors,
+  tierFor,
+  typedHalfLengthRatio,
+} from './glyphShapes'
 
 // baseSize is a reference size at 1920px canvas width; every other width
 // scales proportionally. Exported so VIS-6's hero glow can size itself
@@ -176,36 +182,52 @@ export function drawGlyph(
   }
   ctx.fillStyle = color
   ctx.globalAlpha = 1.0
+  if (spec.type === 'unknown') {
+    if (shadow) {
+      ctx.shadowBlur = shadow.blur
+      ctx.shadowColor = shadow.color
+    }
+    drawUnknown(ctx, actualSize, canvasWidth)
+  } else {
+    drawTypedGlyph(ctx, spec.type, actualSize, canvasWidth, color, shadow)
+  }
+
+  ctx.restore()
+}
+
+function drawTypedGlyph(
+  ctx: CanvasRenderingContext2D,
+  type: Exclude<VesselGlyphSpec['type'], 'unknown'>,
+  actualSize: number,
+  canvasWidth: number,
+  color: string,
+  shadow?: { blur: number; color: string },
+): void {
+  const halfLength = actualSize * typedHalfLengthRatio(type)
+  const shape = getTypedGlyphShape(type, tierFor(halfLength * 2))
+  const tones = mixedGlyphColors(color)
+
+  ctx.scale(halfLength, halfLength)
   if (shadow) {
     ctx.shadowBlur = shadow.blur
     ctx.shadowColor = shadow.color
   }
+  ctx.fillStyle = color
+  ctx.fill(shape.hull)
+  if (shadow) ctx.shadowBlur = 0
 
-  switch (spec.type) {
-    case 'cargo':
-      drawCargo(ctx, actualSize)
-      break
-    case 'tanker':
-      drawTanker(ctx, actualSize)
-      break
-    case 'cruise':
-      drawCruise(ctx, actualSize)
-      break
-    case 'ferry':
-      drawFerry(ctx, actualSize)
-      break
-    case 'tugboat':
-      drawTugboat(ctx, actualSize)
-      break
-    case 'naval':
-      drawNaval(ctx, actualSize)
-      break
-    case 'unknown':
-      drawUnknown(ctx, actualSize, canvasWidth)
-      break
+  ctx.fillStyle = tones.dark
+  ctx.fill(shape.dark, 'evenodd')
+  ctx.fillStyle = tones.light
+  ctx.fill(shape.light)
+  if (shape.tier >= 2) {
+    ctx.fillStyle = '#05070A'
+    ctx.fill(shape.cutout)
   }
 
-  ctx.restore()
+  ctx.strokeStyle = DARK_OUTLINE_COLOR
+  ctx.lineWidth = OUTLINE_WIDTH * (canvasWidth / 1920) / halfLength
+  ctx.stroke(shape.hull)
 }
 
 /**
@@ -237,59 +259,6 @@ function hullPath(
   ctx.bezierCurveTo(-hw, bowCp2y, -bowCp1, bowCp1y, 0, -hh)
   ctx.closePath()
   ctx.fill()
-}
-
-function drawCargo(ctx: CanvasRenderingContext2D, size: number): void {
-  const hw = size * 0.12, hh = size * 0.50
-  hullPath(ctx, hw, hh, 0.85, 0.72)
-  // Negative-space detail: container rows + stern superstructure
-  ctx.fillStyle = '#000000'
-  for (let i = 0; i < 4; i++) {
-    ctx.fillRect(-hw * 0.7, -hh * 0.45 + i * hh * 0.28, hw * 1.4, hh * 0.05)
-  }
-  ctx.fillRect(-hw * 0.8, hh * 0.72, hw * 1.6, hh * 0.09)
-}
-
-function drawTanker(ctx: CanvasRenderingContext2D, size: number): void {
-  const hw = size * 0.135, hh = size * 0.475
-  hullPath(ctx, hw, hh, 0.35, 0.78)
-  // Centreline manifold + stern block
-  ctx.fillStyle = '#000000'
-  ctx.fillRect(-hw * 0.12, -hh * 0.5, hw * 0.24, hh * 1.15)
-  ctx.fillRect(-hw * 0.8, hh * 0.70, hw * 1.6, hh * 0.10)
-}
-
-function drawCruise(ctx: CanvasRenderingContext2D, size: number): void {
-  const hw = size * 0.095, hh = size * 0.55
-  hullPath(ctx, hw, hh, 0.90, 0.45)
-  // Long twin deck lines
-  ctx.fillStyle = '#000000'
-  ctx.fillRect(-hw * 0.55, -hh * 0.35, hw * 0.16, hh * 1.25)
-  ctx.fillRect(hw * 0.39, -hh * 0.35, hw * 0.16, hh * 1.25)
-}
-
-function drawFerry(ctx: CanvasRenderingContext2D, size: number): void {
-  const hw = size * 0.15, hh = size * 0.40
-  hullPath(ctx, hw, hh, 0.55, 0.85)
-  // Wide vehicle-deck band
-  ctx.fillStyle = '#000000'
-  ctx.fillRect(-hw * 0.85, -hh * 0.05, hw * 1.7, hh * 0.16)
-}
-
-function drawTugboat(ctx: CanvasRenderingContext2D, size: number): void {
-  const hw = size * 0.21, hh = size * 0.31
-  hullPath(ctx, hw, hh, 0.45, 0.70)
-  // Aft towing deck
-  ctx.fillStyle = '#000000'
-  ctx.fillRect(-hw * 0.45, hh * 0.25, hw * 0.9, hh * 0.28)
-}
-
-function drawNaval(ctx: CanvasRenderingContext2D, size: number): void {
-  const hw = size * 0.085, hh = size * 0.575
-  hullPath(ctx, hw, hh, 1.0, 0.35)
-  // Thin centreline spine
-  ctx.fillStyle = '#000000'
-  ctx.fillRect(-hw * 0.18, -hh * 0.25, hw * 0.36, hh * 1.0)
 }
 
 /**
