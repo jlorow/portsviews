@@ -258,7 +258,7 @@ function hullPath(
   ctx.lineTo(-hw, -hh * 0.15)
   ctx.bezierCurveTo(-hw, bowCp2y, -bowCp1, bowCp1y, 0, -hh)
   ctx.closePath()
-  ctx.fill()
+  ctx.fill('evenodd')
 }
 
 /**
@@ -289,13 +289,10 @@ function hullPath(
  */
 function drawUnknown(ctx: CanvasRenderingContext2D, size: number, canvasWidth: number): void {
   const halfExtent = size * GLYPH_DOT_RADIUS_RATIO
-  hullPath(
-    ctx,
-    halfExtent * UNKNOWN_ASPECT,
-    halfExtent / UNKNOWN_ASPECT,
-    UNKNOWN_BOW_POINTINESS,
-    UNKNOWN_STERN_WIDTH,
-  )
+  const halfWidth = halfExtent * UNKNOWN_ASPECT
+  const halfLength = halfExtent / UNKNOWN_ASPECT
+
+  hullPath(ctx, halfWidth, halfLength, UNKNOWN_BOW_POINTINESS, UNKNOWN_STERN_WIDTH)
   // A11: hullPath leaves the path it filled current, so this strokes the
   // same outline. canvasWidth is taken rather than derived from size --
   // size already has the canvas scaling folded into it and cannot be

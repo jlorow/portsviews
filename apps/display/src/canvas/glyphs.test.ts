@@ -27,11 +27,19 @@ function createMockCtx() {
     arc: (x: number, y: number, r: number, s: number, e: number) => {
       calls.push(`arc(${x},${y},${r},${s},${e})`)
     },
+    ellipse: (x: number, y: number, rx: number, ry: number, rotation: number, startAngle: number, endAngle: number, anticlockwise?: boolean) => {
+      calls.push(`ellipse(${x},${y},${rx},${ry},${rotation},${startAngle},${endAngle},${Boolean(anticlockwise)})`)
+    },
+    quadraticCurveTo: (cp1x: number, cp1y: number, x: number, y: number) => {
+      calls.push(`quadraticCurveTo(${cp1x},${cp1y},${x},${y})`)
+    },
     closePath: () => { calls.push('closePath') },
-    fill: (pathOrRule?: Path2D | CanvasFillRule) => {
+    fill: (pathOrRule?: Path2D | CanvasFillRule, fillRule?: CanvasFillRule) => {
       const path = pathOrRule instanceof Path2D
       fills.push({ style: currentFillStyle, path, shadowBlur: currentShadowBlur })
       calls.push(path ? `fill(path:${currentFillStyle})` : `fill(${currentFillStyle})`)
+      if (typeof pathOrRule === 'string') calls.push(`fillRule(${pathOrRule})`)
+      if (fillRule !== undefined) calls.push(`fillRule(${String(fillRule)})`)
     },
     rect: (x: number, y: number, w: number, h: number) => {
       calls.push(`rect(${x},${y},${w},${h})`)
@@ -171,6 +179,7 @@ ALL_TYPES.forEach((type) => {
     ctx._calls.filter((c) => c.startsWith('fill(')).length === 1,
     `unknown vessel fills exactly once -- flat, no internal linework (got ${ctx._calls.filter((c) => c.startsWith('fill(')).length})`,
   )
+  assert(ctx._calls.includes('fillRule(evenodd)'), 'unknown vessel uses one evenodd hull fill')
   assert(
     ctx._calls.every((c) => !c.startsWith('fillRect(')),
     `unknown vessel draws no internal detail rectangles (got ${JSON.stringify(ctx._calls.filter((c) => c.startsWith('fillRect(')))})`,
