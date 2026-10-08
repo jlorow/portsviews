@@ -204,7 +204,7 @@ function drawTypedGlyph(
   shadow?: { blur: number; color: string },
 ): void {
   const halfLength = actualSize * typedHalfLengthRatio(type)
-  const shape = getTypedGlyphShape(type, tierFor(halfLength * 2))
+  const shape = getTypedGlyphShape(type, tierFor(type, halfLength * 2))
   const tones = mixedGlyphColors(color)
 
   ctx.scale(halfLength, halfLength)

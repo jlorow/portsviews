@@ -1,7 +1,12 @@
 import './path2dShim'
 import { drawGlyph, GLYPH_DOT_RADIUS_RATIO } from './glyphs'
 import { VesselGlyphSpec, VesselType, NOTABLE_COLOR, DARK_OUTLINE_COLOR } from '@wake/shared'
-import { getTypedGlyphShape, tierFor, TIER2_MIN_PX, TIER3_MIN_PX } from './glyphShapes'
+import {
+  getTypedGlyphShape,
+  tierFor,
+  typedHalfWidthRatio,
+  TIER_MIN_PX_BY_TYPE,
+} from './glyphShapes'
 import { Path2DShim } from './path2dShim'
 
 // Minimal mock CanvasRenderingContext2D that records draw calls
@@ -77,13 +82,10 @@ function createMockCtx() {
   }
 }
 
+const TYPED_TYPES = ['cargo', 'tanker', 'cruise', 'ferry', 'tugboat', 'naval'] as const
+
 const ALL_TYPES: VesselType[] = [
-  'cargo',
-  'tanker',
-  'cruise',
-  'ferry',
-  'tugboat',
-  'naval',
+  ...TYPED_TYPES,
   'unknown',
 ]
 
@@ -265,21 +267,34 @@ P2_HEX_BY_TYPE.forEach(([type, hex]) => {
 }
 
 // Tier thresholds use the full drawn hull length in canvas pixels.
-assert(tierFor(TIER2_MIN_PX - 0.01) === 1, 'tier boundary 59.99 is T1')
-assert(tierFor(TIER2_MIN_PX) === 2, 'tier boundary 60 is T2')
-assert(tierFor(TIER3_MIN_PX - 0.01) === 2, 'tier boundary 99.99 is T2')
-assert(tierFor(TIER3_MIN_PX) === 3, 'tier boundary 100 is T3')
+for (const type of TYPED_TYPES) {
+  const { tier2, tier3 } = TIER_MIN_PX_BY_TYPE[type]
+  assert(tierFor(type, tier2 - 0.01) === 1, `${type} tier boundary ${tier2 - 0.01} is T1`)
+  assert(tierFor(type, tier2) === 2, `${type} tier boundary ${tier2} is T2`)
+  assert(tierFor(type, tier3 - 0.01) === 2, `${type} tier boundary ${tier3 - 0.01} is T2`)
+  assert(tierFor(type, tier3) === 3, `${type} tier boundary ${tier3} is T3`)
+}
+
+const HALF_LENGTH_RATIO_BY_TYPE = {
+  cargo: 0.5,
+  tanker: 0.475,
+  cruise: 0.55,
+  ferry: 0.4,
+  tugboat: 0.31,
+  naval: 0.575,
+} as const
 
 // Each typed shape stays within the per-tier fill/stroke budget.
-const TYPED_TYPES = ['cargo', 'tanker', 'cruise', 'ferry', 'tugboat', 'naval'] as const
 for (const type of TYPED_TYPES) {
   for (const tier of [1, 2, 3] as const) {
-    const halfLength = tier === 1 ? 20 : tier === 2 ? 35 : 55
-    const baseSize = halfLength / ({ cargo: 0.5, tanker: 0.475, cruise: 0.55, ferry: 0.4, tugboat: 0.31, naval: 0.575 }[type])
+    const halfLength = type === 'tugboat'
+      ? tier === 1 ? 13 : tier === 2 ? 17 : 21
+      : tier === 1 ? 20 : tier === 2 ? 35 : 55
+    const baseSize = halfLength / HALF_LENGTH_RATIO_BY_TYPE[type]
     const ctx = createMockCtx()
     drawGlyph(ctx, 0, 0, 0, specFor(type, { baseSize }), 1920)
     const fillCount = ctx._fills.filter((fill) => fill.path).length
-    const expectedTier = tierFor(halfLength * 2)
+    const expectedTier = tierFor(type, halfLength * 2)
     assert(expectedTier === tier, `${type} tier ${tier} fixture selects T${expectedTier}`)
     assert(fillCount === (tier === 1 ? 3 : 4), `${type} T${tier} uses exactly ${tier === 1 ? 3 : 4} budgeted fills`)
     assert(ctx._calls.filter((call) => call.startsWith('stroke(path:')).length === 1, `${type} T${tier} uses one outline stroke`)
@@ -323,6 +338,24 @@ function ellipseRadii(path: Path2DShim): [number, number][] {
   return radii
 }
 
+function detailMinimumDimensions(path: Path2DShim, halfLength: number): number[] {
+  const dimensions: number[] = []
+  for (const operation of path.ops) {
+    if (operation.name === 'addPath') {
+      dimensions.push(...detailMinimumDimensions(operation.args[0] as Path2DShim, halfLength))
+    } else if (operation.name === 'rect' || operation.name === 'roundRect') {
+      dimensions.push(
+        Math.min(Math.abs(operation.args[2] as number), Math.abs(operation.args[3] as number)) * halfLength,
+      )
+    } else if (operation.name === 'ellipse') {
+      dimensions.push(
+        Math.min(Math.abs(operation.args[2] as number), Math.abs(operation.args[3] as number)) * 2 * halfLength,
+      )
+    }
+  }
+  return dimensions
+}
+
 for (const type of TYPED_TYPES) {
   for (const tier of [1, 2, 3] as const) {
     const shape = getTypedGlyphShape(type, tier)
@@ -331,6 +364,34 @@ for (const type of TYPED_TYPES) {
     }
   }
 }
+
+for (const tier of [2, 3] as const) {
+  const tugboatShape = getTypedGlyphShape('tugboat', tier)
+  const minDimensions = [
+    tugboatShape.dark,
+    tugboatShape.light,
+    tugboatShape.cutout,
+  ].flatMap((path) => detailMinimumDimensions(path as unknown as Path2DShim, 16.5))
+  assert(
+    minDimensions.length > 0 && minDimensions.every((dimension) => dimension >= 3),
+    `tugboat T${tier} detail dimensions are at least 3px at a 33px drawn length (got ${JSON.stringify(minDimensions)})`,
+  )
+}
+
+for (const type of TYPED_TYPES) {
+  assert(
+    Math.abs(typedHalfWidthRatio(type) * 100 - ({
+      cargo: 11.11111111111111,
+      tanker: 12.83783783783784,
+      cruise: 10.37735849056604,
+      ferry: 14.814814814814813,
+      tugboat: 21,
+      naval: 8.49525641025641,
+    }[type])) < 1e-9,
+    `${type} half-width at actualSize 100 matches its hull geometry`,
+  )
+}
+
 const tugboatShape = getTypedGlyphShape('tugboat', 3)
 const tugboatEllipses = [
   ...ellipseRadii(tugboatShape.dark as unknown as Path2DShim),

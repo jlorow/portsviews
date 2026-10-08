@@ -47,9 +47,19 @@ const HULL_MAX_WIDTH_RATIOS: Record<TypedVesselType, number> = {
 
 const shapes = new Map<TypedVesselType, Map<GlyphTier, TypedGlyphShape>>()
 
-export function tierFor(drawnLengthPx: number): GlyphTier {
-  if (drawnLengthPx >= TIER3_MIN_PX) return 3
-  if (drawnLengthPx >= TIER2_MIN_PX) return 2
+export const TIER_MIN_PX_BY_TYPE: Record<TypedVesselType, { tier2: number; tier3: number }> = {
+  cargo: { tier2: TIER2_MIN_PX, tier3: TIER3_MIN_PX },
+  tanker: { tier2: TIER2_MIN_PX, tier3: TIER3_MIN_PX },
+  cruise: { tier2: TIER2_MIN_PX, tier3: TIER3_MIN_PX },
+  ferry: { tier2: TIER2_MIN_PX, tier3: TIER3_MIN_PX },
+  tugboat: { tier2: 28, tier3: 40 },
+  naval: { tier2: TIER2_MIN_PX, tier3: TIER3_MIN_PX },
+}
+
+export function tierFor(type: TypedVesselType, drawnLengthPx: number): GlyphTier {
+  const thresholds = TIER_MIN_PX_BY_TYPE[type]
+  if (drawnLengthPx >= thresholds.tier3) return 3
+  if (drawnLengthPx >= thresholds.tier2) return 2
   return 1
 }
 
@@ -75,7 +85,8 @@ export function typedHalfLengthRatio(type: TypedVesselType): number {
 }
 
 export function typedHalfWidthRatio(type: TypedVesselType): number {
-  return beamFor(type) * HALF_LENGTH_RATIOS[type] * HULL_MAX_WIDTH_RATIOS[type]
+  const nauticalWidthScale = type === 'naval' ? 1.72 : 1
+  return beamFor(type) * HALF_LENGTH_RATIOS[type] * HULL_MAX_WIDTH_RATIOS[type] * nauticalWidthScale
 }
 
 export function mixedGlyphColors(color: string): { dark: string; light: string } {
@@ -134,7 +145,8 @@ function addEllipse(path: Path2D, x: number, y: number, radiusX: number, radiusY
 
 function makeHull(type: TypedVesselType, shrink = 1): Path2D {
   const beam = beamFor(type)
-  const b = beam * shrink
+  const nauticalWidthScale = type === 'naval' ? 1.72 : 1
+  const b = beam * shrink * nauticalWidthScale
   return makePath((path) => {
     if (type === 'cargo') {
       path.moveTo(0, -shrink)
@@ -317,34 +329,35 @@ function makeRingAndDetails(
       }
     }
   } else if (type === 'tugboat') {
-    const funnelRadius = beam * 0.13
+    const funnelRadius = beam * 0.14
     const winchRadius = beam * 0.22
-    const bittRadius = beam * 0.10
+    const bittRadius = beam * 0.14
     addRoundRect(dark, -beam * 0.49, -0.31, beam * 0.98, 0.43, beam * 0.13)
-    addRoundRect(light, -beam * 0.40, -0.34, beam * 0.80, 0.11, beam * 0.05)
+    addRoundRect(light, -beam * 0.40, -0.34, beam * 0.80, 0.19, beam * 0.05)
     addEllipse(dark, 0, 0.22, funnelRadius, funnelRadius)
     if (tier >= 2) {
       addEllipse(dark, 0, 0.76, winchRadius, winchRadius)
       addEllipse(dark, -beam * 0.39, 0.84, bittRadius, bittRadius)
       addEllipse(dark, beam * 0.39, 0.84, bittRadius, bittRadius)
     }
-    addRect(cutout, -beam * 0.25, -0.23, beam * 0.50, 0.055)
-    if (tier >= 3) addEllipse(light, 0, 0.76, beam * 0.10, beam * 0.10)
+    addRect(cutout, -beam * 0.25, -0.23, beam * 0.50, 0.19)
+    if (tier >= 3) addEllipse(light, 0, 0.76, beam * 0.14, beam * 0.14)
   } else {
-    addEllipse(dark, 0, -0.60, beam * 0.16, 0.055)
-    addRect(dark, -beam * 0.018, -0.75, beam * 0.036, 0.095)
-    addRoundRect(dark, -beam * 0.48, -0.30, beam * 0.96, 0.40, beam * 0.06)
-    addRoundRect(light, -beam * 0.37, -0.28, beam * 0.74, 0.09, beam * 0.03)
+    const xScale = type === 'naval' ? 1.72 : 1
+    addEllipse(dark, 0, -0.60, beam * 0.16 * xScale, 0.055)
+    addRect(dark, -beam * 0.018 * xScale, -0.75, beam * 0.036 * xScale, 0.095)
+    addRoundRect(dark, -beam * 0.48 * xScale, -0.30, beam * 0.96 * xScale, 0.40, beam * 0.06)
+    addRoundRect(light, -beam * 0.37 * xScale, -0.28, beam * 0.74 * xScale, 0.09, beam * 0.03)
     if (tier >= 2) {
-      addRect(dark, -beam * 0.22, 0.20, beam * 0.44, 0.14)
-      addEllipse(dark, 0, 0.72, beam * 0.38, 0.12)
+      addRect(dark, -beam * 0.22 * xScale, 0.20, beam * 0.44 * xScale, 0.14)
+      addEllipse(dark, 0, 0.72, beam * 0.38 * xScale, 0.12)
     }
-    addRect(cutout, -beam * 0.26, -0.19, beam * 0.52, 0.035)
-    addRect(cutout, -beam * 0.015, 0.70, beam * 0.03, 0.08)
-    addRect(cutout, -beam * 0.20, 0.735, beam * 0.40, 0.025)
+    addRect(cutout, -beam * 0.26 * xScale, -0.19, beam * 0.52 * xScale, 0.035)
+    addRect(cutout, -beam * 0.015 * xScale, 0.70, beam * 0.03 * xScale, 0.08)
+    addRect(cutout, -beam * 0.20 * xScale, 0.735, beam * 0.40 * xScale, 0.025)
     if (tier >= 3) {
-      addEllipse(light, 0, -0.60, beam * 0.07, 0.026)
-      addRect(light, -beam * 0.025, -0.70, beam * 0.05, 0.08)
+      addEllipse(light, 0, -0.60, beam * 0.07 * xScale, 0.026)
+      addRect(light, -beam * 0.025 * xScale, -0.70, beam * 0.05 * xScale, 0.08)
     }
   }
 
