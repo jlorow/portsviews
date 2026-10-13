@@ -149,7 +149,6 @@ announcement will go first.
 apps/display/   the renderer — React and a 2D canvas, drawn 60 times a second
 server/         connects to the AIS feed, normalises messages, broadcasts them
 shared/         the projection maths, vessel state and configuration both use
-landing/        the project's web page, including a live in-browser demo
 ```
 
 Tests are plain TypeScript run with `tsx`, with no test framework:
