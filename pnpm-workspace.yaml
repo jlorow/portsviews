@@ -2,7 +2,7 @@ packages:
   - 'apps/*'
   - 'server'
   - 'shared'
-  - 'landing'
+
 # esbuild's install step is approved explicitly (pnpm 11+ reads allowBuilds; older pnpm reads onlyBuiltDependencies)
 allowBuilds:
   esbuild: true

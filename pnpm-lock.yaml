@@ -52,25 +52,6 @@ importers:
         specifier: ^6.0.0
         version: 6.4.3(@types/node@22.20.2)(tsx@4.23.13)
 
-  landing:
-    dependencies:
-      '@wake/shared':
-        specifier: workspace:*
-        version: link:../shared
-    devDependencies:
-      '@mapbox/vector-tile':
-        specifier: 2.0.5
-        version: 2.0.5
-      pbf:
-        specifier: 4.0.2
-        version: 4.0.2
-      typescript:
-        specifier: ~5.7.0
-        version: 5.7.3
-      vite:
-        specifier: ^6.0.0
-        version: 6.4.3(@types/node@22.20.2)(tsx@4.23.13)
-
   server:
     dependencies:
       '@wake/shared':

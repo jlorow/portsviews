@@ -14,8 +14,6 @@ dev-server-err.log
 .env.local
 server/.env
 server/.aisstream.lock
-# Cloudflare Pages local development files; .dev.vars may hold secrets.
-landing/.dev.vars
 server/captures/
 *.ndjson
 *.jsonl
@@ -31,6 +29,3 @@ server/tools/
 # Local throwaway audit folders
 *-audit/
 
-# Cloudflare Pages local development files; .dev.vars may hold secrets.
-.dev.vars
-.wrangler/
