@@ -7,6 +7,7 @@
     "start": "tsx src/index.ts",
     "replay": "tsx watch src/replay.ts",
     "capacity-capture": "tsx src/tools/capacityCapture.ts",
+    "make-area": "tsx src/tools/makeArea.ts",
     "tsc": "tsc",
     "typecheck": "tsc --noEmit"
   },

@@ -4,6 +4,7 @@
   "scripts": {
     "dev:display": "pnpm --filter display dev",
     "build:display": "pnpm --filter display build",
+    "make-area": "pnpm --filter @wake/server make-area",
     "typecheck": "pnpm --filter display tsc --noEmit",
     "dev:server": "pnpm --filter @wake/server dev",
     "typecheck:server": "pnpm --filter @wake/server tsc --noEmit"
