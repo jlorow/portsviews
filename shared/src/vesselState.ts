@@ -1,5 +1,5 @@
-import { TrackPoint } from './track.ts'
-import { DisplayConfig } from './config.ts'
+import type { TrackPoint } from './track.ts'
+import type { DisplayConfig } from './config.ts'
 
 export interface VesselFix {
   mmsi: string

@@ -1,7 +1,8 @@
+import fs from 'node:fs'
 import { config } from 'dotenv'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEFAULT_CONFIG, DEMO_AREAS, parseDemoArea } from '@wake/shared'
+import { DEFAULT_CONFIG, DEMO_AREAS, parseDemoArea, parseLocalAreas, resolveArea, type LocalAreasFile } from '@wake/shared'
 import { registerShutdown } from './shutdown.ts'
 import { createPositionMap, createStaticMap } from './caches.ts'
 import { createBroadcastServer } from './broadcast.ts'
@@ -42,18 +43,38 @@ const BANNER = '='.repeat(60)
 // render an empty ocean from replay. An invalid value falls back to
 // 'dover' for logging (replay opens no subscription, so unlike index.ts
 // this is informational, not a refusal).
+const repoRoot = path.resolve(__dirname, '..', '..')
+const localAreasPath = path.join(repoRoot, 'areas.local.json')
+let localAreas: LocalAreasFile | null = null
+if (fs.existsSync(localAreasPath)) {
+  try {
+    const result = parseLocalAreas(JSON.parse(fs.readFileSync(localAreasPath, 'utf8')))
+    if (!result.ok) {
+      console.error('[Wake:REPLAY] Invalid areas.local.json:')
+      for (const error of result.errors) console.error(`  - ${error}`)
+      process.exit(1)
+    }
+    localAreas = result.value
+  } catch (error) {
+    console.error('[Wake:REPLAY] Unable to read areas.local.json: ' + (error as Error).message)
+    process.exit(1)
+  }
+}
 const REPLAY_AREA_RAW = process.env.WAKE_AREA
-const REPLAY_AREA_KEY = parseDemoArea(REPLAY_AREA_RAW) ?? 'dover'
+const REPLAY_RESOLVED_AREA = resolveArea(REPLAY_AREA_RAW, localAreas)
+const REPLAY_AREA_KEY = REPLAY_RESOLVED_AREA?.key ?? 'dover'
+const REPLAY_AREA = REPLAY_RESOLVED_AREA?.area ?? DEMO_AREAS.dover
 
 function logBanner(recordCount: number, malformedCount: number, spanSec: number): void {
   console.log(BANNER)
   console.log('[Wake:REPLAY] REPLAY MODE -- NOT LIVE AIS DATA')
   console.log(`[Wake:REPLAY] Source: ${REPLAY_PATH}`)
   console.log(`[Wake:REPLAY] Speed: ${REPLAY_SPEED}x   Loop: yes   Port: ${BROADCAST_PORT}`)
-  console.log(`[Wake:REPLAY] Area: ${REPLAY_AREA_KEY}`)
-  if (REPLAY_AREA_RAW !== undefined && parseDemoArea(REPLAY_AREA_RAW) === null) {
+  console.log(`[Wake:REPLAY] Area: ${REPLAY_AREA_KEY} · ${REPLAY_AREA.displayName}`)
+  console.log(`[Wake:REPLAY] Area bounds: ${JSON.stringify(REPLAY_AREA.boundingBoxes)}`)
+  if (REPLAY_AREA_RAW !== undefined && REPLAY_RESOLVED_AREA === null) {
     console.warn(
-      `[Wake:REPLAY] Invalid WAKE_AREA ${JSON.stringify(REPLAY_AREA_RAW)} -- expected one of: ${Object.keys(DEMO_AREAS).join(', ')}. Logging dover.`,
+      `[Wake:REPLAY] Invalid WAKE_AREA ${JSON.stringify(REPLAY_AREA_RAW)} -- expected one of: ${[...Object.keys(DEMO_AREAS), ...(localAreas?.areas ? Object.keys(localAreas.areas) : [])].join(', ')}. Logging dover.`,
     )
   }
   if (REPLAY_AREA_KEY !== 'dover') {

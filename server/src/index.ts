@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import { config } from 'dotenv'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -5,7 +6,8 @@ import {
   DEFAULT_CONFIG,
   DEMO_AREAS,
   parseAisSource,
-  parseDemoArea,
+  parseLocalAreas,
+  resolveArea,
   resolveSourceConfig,
 } from '@wake/shared'
 import { acquireLock } from './lock.ts'
@@ -30,16 +32,40 @@ config({ path: path.resolve(__dirname, '..', '..', '.env') })
 // a missing key for the chosen source refuse to start with a clear
 // message naming the VARIABLE -- never its value -- and do so BEFORE
 // acquireLock(), so a refused start never leaves a stale PID lockfile.
+const repoRoot = path.resolve(__dirname, '..', '..')
+const localAreasPath = path.join(repoRoot, 'areas.local.json')
+
+function readLocalAreas(): import('@wake/shared').LocalAreasFile | null {
+  if (!fs.existsSync(localAreasPath)) return null
+  try {
+    const raw = fs.readFileSync(localAreasPath, 'utf8')
+    const parsed = JSON.parse(raw)
+    const result = parseLocalAreas(parsed)
+    if (!result.ok) {
+      console.error(`[Wake] areas.local.json is invalid:`)
+      for (const error of result.errors) console.error(`  - ${error}`)
+      process.exit(1)
+    }
+    return result.value
+  } catch (error) {
+    console.error(`[Wake] Unable to read areas.local.json: ${(error as Error).message}`)
+    process.exit(1)
+  }
+}
+
+const localAreas = readLocalAreas()
 const WAKE_AREA_RAW = process.env.WAKE_AREA
 const WAKE_AIS_SOURCE_RAW = process.env.WAKE_AIS_SOURCE
 
-const areaKey = parseDemoArea(WAKE_AREA_RAW)
-if (areaKey === null) {
+const resolvedArea = resolveArea(WAKE_AREA_RAW, localAreas)
+const validAreaKeys = [...Object.keys(DEMO_AREAS), ...(localAreas?.areas ? Object.keys(localAreas.areas) : [])]
+if (resolvedArea === null) {
   console.error(
-    `[Wake] Invalid WAKE_AREA ${JSON.stringify(WAKE_AREA_RAW)} -- expected one of: ${Object.keys(DEMO_AREAS).join(', ')}. Refusing to start.`,
+    `[Wake] Invalid WAKE_AREA ${JSON.stringify(WAKE_AREA_RAW)} -- expected one of: ${validAreaKeys.join(', ')}. Refusing to start.`,
   )
   process.exit(1)
 }
+const areaKey = resolvedArea.key
 
 const aisSource = parseAisSource(WAKE_AIS_SOURCE_RAW)
 if (aisSource === null) {
@@ -61,9 +87,9 @@ if ('error' in sourceConfig) {
   process.exit(1)
 }
 
-console.log(`[Wake] Area: ${areaKey} · Source: ${aisSource}`)
+console.log(`[Wake] Area: ${areaKey} · ${resolvedArea.area.displayName} · Source: ${aisSource}`)
 
-const area = DEMO_AREAS[areaKey]
+const area = resolvedArea.area
 
 acquireLock()
 

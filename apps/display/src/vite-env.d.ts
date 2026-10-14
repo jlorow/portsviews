@@ -12,6 +12,8 @@ interface ImportMetaEnv {
   // bundle. Unset/blank means dover; an invalid key falls back to dover
   // with one console warning (WakeCanvas).
   readonly WAKE_AREA?: string
+  // Local custom areas and basemaps, validated at config time.
+  readonly WAKE_LOCAL_AREAS?: string
 }
 
 interface ImportMeta {

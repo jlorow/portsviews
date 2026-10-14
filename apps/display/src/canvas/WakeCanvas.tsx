@@ -2,13 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_CONFIG,
   DEMO_AREAS,
-  parseDemoArea,
-  basemapAreaFor,
+  parseLocalAreas,
+  resolveArea,
+  basemapFor,
   radiusStepsFor,
   stepRadius,
   zoomKeyAction,
   type DemoAreaKey,
   type DisplayConfig,
+  type LocalAreasFile,
 } from '@wake/shared'
 import ConnectionIndicator from '../ConnectionIndicator'
 import {
@@ -24,24 +26,40 @@ import { FPS_WINDOW_MS, applyTuneKey, tuneOverlayText } from './tuneOverlay'
 
 const DEFAULT_BROADCAST_PORT = 8080
 
+let localAreas: LocalAreasFile | null = null
+try {
+  const rawLocal = import.meta.env.WAKE_LOCAL_AREAS
+  if (rawLocal && rawLocal !== 'undefined') {
+    const parsed = JSON.parse(rawLocal)
+    const result = parseLocalAreas(parsed)
+    if (!result.ok) {
+      console.warn(`[Wake] Ignoring invalid WAKE_LOCAL_AREAS: ${result.errors.join('; ')}`)
+    } else {
+      localAreas = result.value
+    }
+  }
+} catch (error) {
+  console.warn(`[Wake] Failed to parse WAKE_LOCAL_AREAS: ${(error as Error).message}`)
+}
+
 // DEMO-1: view centre and radius come from DEMO_AREAS (@wake/shared) for
 // the area key injected from the repo-root .env — vite.config.ts defines
 // import.meta.env.WAKE_AREA and nothing else from that file. Unset/blank
 // means dover; an invalid key falls back to dover with ONE console
 // warning at module load.
-const AREA_KEY = parseDemoArea(import.meta.env.WAKE_AREA)
-if (AREA_KEY === null) {
+const RESOLVED_AREA = resolveArea(import.meta.env.WAKE_AREA, localAreas)
+if (RESOLVED_AREA === null) {
   console.warn(
-    `[Wake] Invalid WAKE_AREA ${JSON.stringify(import.meta.env.WAKE_AREA)} -- expected one of: ${Object.keys(DEMO_AREAS).join(', ')}. Using dover.`,
+    `[Wake] Invalid WAKE_AREA ${JSON.stringify(import.meta.env.WAKE_AREA)} -- expected one of: ${[...Object.keys(DEMO_AREAS), ...(localAreas?.areas ? Object.keys(localAreas.areas) : [])].join(', ')}. Using dover.`,
   )
 }
-const areaKey: DemoAreaKey = AREA_KEY ?? 'dover'
-const AREA = DEMO_AREAS[areaKey]
+const areaKey = RESOLVED_AREA?.key ?? 'dover'
+const AREA = RESOLVED_AREA?.area ?? DEMO_AREAS[areaKey as DemoAreaKey]
 
 // VIS-9: the basemap for this area, or undefined if no tile extract exists
 // for it. Only dover ships one; every other area draws exactly what it
 // drew before that story -- pure black, no MapLibre context created at all.
-const BASEMAP_AREA = basemapAreaFor(areaKey)
+const BASEMAP_AREA = basemapFor(areaKey, localAreas)
 
 // The area centre is fixed; radiusNmRef below owns the live view radius.
 const VIEW = { centerLat: AREA.centerLat, centerLon: AREA.centerLon }

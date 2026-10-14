@@ -1,6 +1,8 @@
+import fs from 'node:fs'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
+import { parseLocalAreas } from '@wake/shared'
 
 // DEMO-1: loads ONLY WAKE_AREA from the repo-root .env and injects it as
 // one compile-time constant. The prefix argument restricts loadEnv to
@@ -20,6 +22,20 @@ const PUBLIC_ENV_PREFIXES = ['WAKE_AREA']
 export default defineConfig(({ mode }) => {
   // __dirname is apps/display; the root .env lives two directories up.
   const env = loadEnv(mode, path.resolve(__dirname, '../..'), PUBLIC_ENV_PREFIXES)
+  const localAreasPath = path.resolve(__dirname, '../..', 'areas.local.json')
+  let wakeLocalAreas: unknown = null
+  if (fs.existsSync(localAreasPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(localAreasPath, 'utf8'))
+      const result = parseLocalAreas(parsed)
+      if (!result.ok) {
+        throw new Error(result.errors.join('\n'))
+      }
+      wakeLocalAreas = result.value
+    } catch (error) {
+      throw new Error(`Invalid areas.local.json at ${localAreasPath}: ${(error as Error).message}`)
+    }
+  }
   return {
     plugins: [react()],
     resolve: {
@@ -31,7 +47,8 @@ export default defineConfig(({ mode }) => {
       // Always a string: unset/blank resolves to '' and parseDemoArea('')
       // is 'dover' (the default), so the browser bundle never sees an
       // undefined variable.
-      'import.meta.env.WAKE_AREA': JSON.stringify(env.WAKE_AREA ?? '')
+      'import.meta.env.WAKE_AREA': JSON.stringify(env.WAKE_AREA ?? ''),
+      'import.meta.env.WAKE_LOCAL_AREAS': JSON.stringify(wakeLocalAreas),
     }
   }
 })
