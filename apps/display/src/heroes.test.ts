@@ -2,6 +2,8 @@ import type { VesselType } from '@wake/shared'
 import {
   createHeroState,
   updateHeroes,
+  HERO_REENTRY_COOLDOWN_MS,
+  HERO_KEEP_MIN_OPACITY,
   type HeroCandidate,
   type HeroState,
 } from './heroes'
@@ -19,8 +21,13 @@ function assert(condition: boolean, label: string): void {
   }
 }
 
-function candidate(mmsi: string, vesselType: VesselType, sogKn: number): HeroCandidate {
-  return { mmsi, vesselType, sogKn }
+function candidate(
+  mmsi: string,
+  vesselType: VesselType,
+  sogKn: number,
+  opacity: number = 1.0,
+): HeroCandidate {
+  return { mmsi, vesselType, sogKn, opacity }
 }
 
 function mmsisOf(state: HeroState): string[] {
@@ -203,6 +210,75 @@ function mmsisOf(state: HeroState): string[] {
   )
   assert(!mmsisOf(call6).includes('S-A'), 'cooldown: S-A cannot return within its 10-minute cooldown')
   assert(mmsisOf(call6).includes('S-F'), 'cooldown: S-F (not on cooldown) fills the swap instead of S-A')
+}
+
+// Keep/drop rules (PART 2): HERO_KEEP_SOG_KN = 0.3, HERO_KEEP_MIN_OPACITY = 0.8.
+// An EXISTING hero slot is kept (not re-admitted) by the soft keep rule,
+// even when the reported sog or opacity slips under the entry threshold.
+{
+  // First admit H1 as a fresh hero (sog 5.0 >= 0.5, fully opaque).
+  const first = updateHeroes(createHeroState(), [candidate('H1', 'cargo', 5.0)], 0)
+  assert(mmsisOf(first).includes('H1'), 'keep-setup: H1 admitted as a fresh hero')
+
+  // Now a later frame reports H1 at 0.4 kn (>= 0.3) -> the existing slot
+  // is kept, not dropped, even though 0.4 < 0.5 (entry rule).
+  const kept = updateHeroes(first, [candidate('H1', 'cargo', 0.4, 1.0)], 1000)
+  assert(mmsisOf(kept).includes('H1'), 'keep: hero at 0.4kn is kept (0.4 >= 0.3, slot kept)')
+}
+{
+  const first = updateHeroes(createHeroState(), [candidate('H2', 'cargo', 5.0)], 0)
+  const dropped = updateHeroes(first, [candidate('H2', 'cargo', 0.29, 1.0)], 1000)
+  assert(!mmsisOf(dropped).includes('H2'), 'drop: hero at 0.29kn (< 0.3) is dropped')
+  assert(dropped.cooldownUntil.get('H2') === 1000 + HERO_REENTRY_COOLDOWN_MS, 'drop: dropped hero starts its cooldown')
+}
+{
+  const kept = updateHeroes(createHeroState(), [candidate('H3', 'cargo', 5.0)], 0)
+  const after = updateHeroes(kept, [candidate('H3', 'cargo', 0.3, 1.0)], 1000)
+  assert(mmsisOf(after).includes('H3'), 'keep: hero at 0.3kn is kept (0.3 >= 0.3, slot kept)')
+}
+{
+  const kept = updateHeroes(createHeroState(), [candidate('H4', 'cargo', 5.0)], 0)
+  const after = updateHeroes(
+    kept,
+    [candidate('H4', 'cargo', 0.3, HERO_KEEP_MIN_OPACITY - 0.01)],
+    1000,
+  )
+  assert(!mmsisOf(after).includes('H4'), 'drop: hero at opacity 0.79 (< 0.8) is dropped')
+}
+{
+  // Establish H5 as a fresh hero (fully opaque, above the entry threshold),
+  // then a later frame keeps the same slot at opacity 0.8 (>= 0.8) -> kept.
+  const kept = updateHeroes(
+    createHeroState(),
+    [candidate('H5', 'cargo', 5.0, 1.0)],
+    0,
+  )
+  assert(mmsisOf(kept).includes('H5'), 'keep-setup: H5 admitted as a fresh hero (full opacity)')
+  const after = updateHeroes(
+    kept,
+    [candidate('H5', 'cargo', 5.0, HERO_KEEP_MIN_OPACITY)],
+    1000,
+  )
+  assert(mmsisOf(after).includes('H5'), 'keep: hero at opacity 0.8 is kept (0.8 >= 0.8, slot kept)')
+}
+{
+  const result = updateHeroes(createHeroState(), [candidate('N1', 'cargo', 0.4)], 1000)
+  assert(mmsisOf(result).length === 0, 'admit: non-hero at 0.4kn (sog < 0.5) is NOT admitted')
+}
+{
+  const result = updateHeroes(createHeroState(), [candidate('N2', 'cargo', 0.4, HERO_KEEP_MIN_OPACITY - 0.01)], 1000)
+  assert(mmsisOf(result).length === 0, 'admit: non-hero at opacity 0.79 is NOT admitted')
+}
+{
+  const result = updateHeroes(createHeroState(), [candidate('N3', 'unknown', 0.3, 1.0)], 1000)
+  assert(mmsisOf(result).length === 0, 'admit: unknown-type vessel is NEVER admitted')
+}
+{
+  // An unknown-type vessel never becomes a hero, so there is no existing
+  // slot to keep. Combined with the admission tests above, it is never
+  // kept and never admitted.
+  const result = updateHeroes(createHeroState(), [candidate('K1', 'unknown', 0.3, 1.0)], 1000)
+  assert(mmsisOf(result).length === 0, 'keep: unknown-type vessel is never kept (no existing slot)')
 }
 
 const total = passed + failed

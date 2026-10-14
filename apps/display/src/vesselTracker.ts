@@ -285,8 +285,13 @@ export function renderFrame(
 
   if (render.config.heroesEnabled) {
     const candidates: HeroCandidate[] = visible
-      .filter((e) => e.opacity === 1.0)
-      .map((e) => ({ mmsi: e.mmsi, vesselType: e.vesselType, sogKn: e.eased.lastFix.sogKn }))
+      .filter((e) => e.opacity > 0)
+      .map((e) => ({
+        mmsi: e.mmsi,
+        vesselType: e.vesselType,
+        sogKn: e.eased.lastFix.sogKn,
+        opacity: e.opacity,
+      }))
     heroStateRef.current = updateHeroes(heroStateRef.current, candidates, render.nowMs)
     heroMmsis = new Set(heroStateRef.current.slots.map((s) => s.mmsi))
   } else {
@@ -334,7 +339,9 @@ export function renderFrame(
     // they already draw a circle at this same radius ratio -- routing
     // them through drawDot would silently drop their unknownScale term
     // and change a glyph VIS-7 already settled at the ceiling.
-    if (!isUnknown && render.config.stoppedAsDot && isStoppedForGlyph(entry.eased.lastFix.sogKn)) {
+    if (entry.vesselType !== 'unknown' && render.config.stoppedAsDot && isStoppedForGlyph(entry.eased.lastFix.sogKn)) {
+      // entry.vesselType is narrowed here to the six typed types, so it is
+      // assignable to drawDot's type param.
       drawDot(
         ctx,
         entry.projectedX,
@@ -342,6 +349,7 @@ export function renderFrame(
         baseSize,
         VESSEL_COLORS[entry.vesselType],
         render.canvasWidth,
+        entry.vesselType,
       )
       continue
     }

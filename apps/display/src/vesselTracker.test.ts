@@ -12,7 +12,8 @@ import {
   type TrackedVesselMap,
 } from './vesselTracker'
 import { HERO_MIN_SOG_KN } from './heroes'
-import { GLYPH_DOT_RADIUS_RATIO } from './canvas/glyphs'
+import { GLYPH_DOT_RADIUS_RATIO, STOPPED_DOT_MIN_RADIUS_PX } from './canvas/glyphs'
+import { typedHalfWidthRatio } from './canvas/glyphShapes'
 import { buildLegendRows, drawLegend, legendLabel, LEGEND_ORDER, type LegendRow } from './canvas/legend'
 import { liveAisText, estimateTextWidth } from './canvas/labels'
 
@@ -1165,11 +1166,12 @@ function arcRadius(calls: string[]): number | null {
 {
   const ctx = drawOneTypedVessel('cargo', 0.3)
 
-  // Hardcoded from VIS-8's A1(b) audit: radius = VESSEL_BASE_SIZES.cargo
-  // (120) * glyphScale (0.75) * canvasWidth/1920 (1) * 0.28 = 25.2 px.
-  // Tolerance covers binary float representation only.
+  // Radius = max(1.1 x cargo hull half-width, STOPPED_DOT_MIN_RADIUS_PX).
+  // halfWidth = 120 x 0.75 x 1/4.5 x 0.5 = 10.0; 1.1 x 10.0 = 11.0 > 6.
+  // (VIS-8's old circle-era radius, 120 x 0.75 x 0.28 = 25.2, is unchanged
+  // as the unknown silhouette's footprint and must not change.)
   const r = arcRadius(ctx._calls)
-  assert(r !== null && Math.abs(r - 25.2) < 1e-9, `dot: stopped cargo draws an arc of radius 25.2 (got ${r})`)
+  assert(r !== null && Math.abs(r - 11.0) < 1e-9, `dot: stopped cargo draws an arc of radius 11.0 (got ${r})`)
   assert(ctx._bezierCount() === 0, `dot: stopped cargo draws no hull bezier (got ${ctx._bezierCount()})`)
   assert(
     ctx._calls.every((c) => !c.startsWith('rotate(')),
@@ -1192,6 +1194,9 @@ function arcRadius(calls: string[]): number | null {
   const below = drawOneTypedVessel('cargo', 0.49999)
   assert(below._arcCount() === 1, `dot-boundary: cargo just below 0.5kn draws a dot (got ${below._arcCount()} arcs)`)
   assert(below._pathFillCount() === 0, 'dot-boundary: cargo just below 0.5kn draws no hull paths')
+  // 0.49999 -> stopped, dot radius = max(1.1 x hull half-width, 6) = 11.0
+  const r = arcRadius(below._calls)
+  assert(r !== null && Math.abs(r - 11.0) < 1e-9, `dot-boundary: cargo just below 0.5kn dot radius is max(1.1 x half-width, min) (got ${r})`)
 }
 
 // Scenario: a sentinel-zeroed vessel (S3.3 zeroes BOTH sogKn and cogDeg
@@ -1200,8 +1205,9 @@ function arcRadius(calls: string[]): number | null {
 {
   const ctx = drawOneTypedVessel('tanker', 0)
   const r = arcRadius(ctx._calls)
-  // 110 * 0.75 * 0.28 = 23.1
-  assert(r !== null && Math.abs(r - 23.1) < 1e-9, `dot-sentinel: sentinel-zeroed tanker draws a dot of radius 23.1 (got ${r})`)
+  // halfWidth = 110 x 0.75 x 1/3.7 x 0.475 = 10.591; 1.1 x 10.591 = 11.6503 > 6
+  const expected = Math.max(1.1 * (110 * 0.75 * typedHalfWidthRatio('tanker')), STOPPED_DOT_MIN_RADIUS_PX * (1920 / 1920));
+  assert(r !== null && Math.abs(r - expected) < 1e-9, `dot-sentinel: sentinel-zeroed tanker draws a dot of radius ${expected.toFixed(6)} (got ${r})`)
   assert(
     JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: '#FF7A1A', globalAlpha: 1 }]),
     `dot-sentinel: drawn in tanker's own colour #FF7A1A (got ${JSON.stringify(ctx._fills())})`,
@@ -1267,6 +1273,56 @@ function arcRadius(calls: string[]): number | null {
   // And the dot's radius ratio is glyphs.ts's own exported constant, the
   // same one drawUnknown uses -- one formula, not two.
   assert(GLYPH_DOT_RADIUS_RATIO === 0.28, `dot: GLYPH_DOT_RADIUS_RATIO is 0.28 (got ${GLYPH_DOT_RADIUS_RATIO})`)
+}
+
+// ---- STEP 1.e: new dot-radius tests -------------------------------------// Each typed type's stopped dot radius equals max(1.1 x hull half-width,
+  // min radius) at glyphScale 0.75, canvas 1920, using the renderer's own
+  // typedHalfWidthRatio values. The expected radii are computed with the same
+  // helper as the renderer so a drift in hull geometry reads as a radius drift.
+  const VESSEL_BASE_SIZES = {
+    cargo: 120, tanker: 110, cruise: 130, ferry: 90, tugboat: 70, naval: 100,
+  } as const;
+  const actualSizeAt = (type: keyof typeof VESSEL_BASE_SIZES, scale: number) => {
+    return (VESSEL_BASE_SIZES[type] * scale) * (1920 / 1920);
+  };
+  for (const type of ['cargo', 'tanker', 'cruise', 'ferry', 'tugboat', 'naval'] as const) {
+    const scale = 0.75;
+    const actualSize = actualSizeAt(type, scale);
+    const hullHalfWidth = actualSize * typedHalfWidthRatio(type);
+    const expected = Math.max(1.1 * hullHalfWidth, STOPPED_DOT_MIN_RADIUS_PX * (1920 / 1920));
+    const ctx = drawOneTypedVessel(type, 0.3);
+    const r = arcRadius(ctx._calls);
+    assert(
+      r !== null && Math.abs(r - expected) < 1e-9,
+      `dot-radius: ${type} at glyphScale 0.75 draws radius ${expected.toFixed(6)} (got ${r})`,
+    );
+  }
+  {
+    // The minimum radius applies when 1.1 x hull half-width is below it.
+    // naval at glyphScale 0.3: hullHalfWidth = 30 x typedHalfWidthRatio(naval) = 2.549;
+    // 1.1 x 2.549 = 2.804 < 6, so the dot must be exactly 6.0 (scaled by canvas).
+    const ctx = drawOneTypedVessel('naval', 0.3, { glyphScale: 0.3 });
+    const r = arcRadius(ctx._calls);
+    const expected = Math.max(1.1 * (30 * typedHalfWidthRatio('naval')), STOPPED_DOT_MIN_RADIUS_PX * (1920 / 1920));
+    assert(r !== null && Math.abs(r - expected) < 1e-9, `min-radius: naval at glyphScale 0.3 draws ${expected.toFixed(6)} (got ${r})`);
+  }
+  
+  // The unknown silhouette footprint is unchanged: its half-length is still
+  // 16.46057107150296 at the default unknownScale 0.6. Routing it through
+  // drawDot never happened (it keeps its own circle-ratio formula), so this
+  // scenario passes with the dot rule on and off identically.
+{
+  const on = drawOneTypedVessel('unknown', 0, { stoppedAsDot: true })
+  const off = drawOneTypedVessel('unknown', 0, { stoppedAsDot: false })
+  assert(
+    JSON.stringify(on._calls) === JSON.stringify(off._calls),
+    'unknown-silhouette: draw calls unchanged by the dot rule',
+  )
+  const bowY = Number(on._calls.find((c) => c.startsWith('moveTo(0,-'))!.slice('moveTo(0,'.length, -1))
+  assert(
+    Math.abs(bowY - -16.46057107150296) < 1e-9,
+    `unknown-silhouette: half-length unchanged at 16.46057107150296 (got ${bowY})`,
+  )
 }
 
 // Scenario: the shipped default.
@@ -1841,30 +1897,23 @@ function drawOneUnknownVessel(sogKn: number, cogDeg: number) {
   )
 }
 
-// Scenario: A2's stopped TYPED vessel is a separate code path and is
-// untouched by A7 -- still a plain circle in its own colour, not the new
-// silhouette. The full call sequence is hardcoded, so any drift shows up
-// here rather than being absorbed by a looser check.
+// Scenario: a stopped TYPED vessel is now a dot of the beam-derived
+// radius, not the old A2 circle radius 25.2. Radius = max(1.1 x hull
+// half-width, min) = max(1.1 x 90 x 0.111111, 6) = 11.0. The A11 dark
+// outline still follows the same fill (colour, alpha, no rotation).
 {
   const ctx = drawOneTypedVessel('cargo', 0.3)
+  const r = arcRadius(ctx._calls)
+  assert(r !== null && Math.abs(r - 11.0) < 1e-9, `dot: stopped cargo draws an arc of radius 11.0 (got ${r})`)
+  assert(ctx._bezierCount() === 0, `dot: stopped cargo draws no hull bezier (got ${ctx._bezierCount()})`)
   assert(
-    JSON.stringify(ctx._calls) === JSON.stringify([
-      'save',
-      'translate(960,540)',
-      'beginPath',
-      'arc(0,0,25.200000000000003,0,6.283185307179586)',
-      'closePath',
-      'fill',
-      'stroke',
-      'restore',
-    ]),
-    `a7-typed-dot: a stopped cargo still draws exactly A2's circle at radius 25.2, now with A11's outline (got ${JSON.stringify(ctx._calls)})`,
+    ctx._calls.every((c) => !c.startsWith('rotate(')),
+    `dot: stopped cargo is never rotated (calls: ${JSON.stringify(ctx._calls.filter((c) => c.startsWith('rotate(')))})`,
   )
   assert(
     JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: '#0AA0FF', globalAlpha: 1 }]),
-    `a7-typed-dot: still in cargo's own colour at alpha 1 (got ${JSON.stringify(ctx._fills())})`,
+    `dot: exactly one fill, in cargo's own P2 colour #0AA0FF at alpha 1 (got ${JSON.stringify(ctx._fills())})`,
   )
-  assert(ctx._bezierCount() === 0, `a7-typed-dot: no hullPath bezier -- not the unknown silhouette (got ${ctx._bezierCount()})`)
 }
 
 // ============ VIS-8 A11: dark outline on dots and the silhouette =======

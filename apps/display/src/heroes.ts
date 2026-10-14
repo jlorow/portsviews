@@ -7,6 +7,8 @@ export const HERO_MIN_HOLD_MS = 600_000
 export const HERO_SWAP_INTERVAL_MS = 60_000
 export const HERO_REENTRY_COOLDOWN_MS = 600_000
 export const HERO_MIN_SOG_KN = 0.5
+export const HERO_KEEP_SOG_KN = 0.3
+export const HERO_KEEP_MIN_OPACITY = 0.8
 
 // A candidate for hero status: one on-screen, not-stale vessel this
 // frame. Staleness and on-screen membership are the caller's job
@@ -17,6 +19,7 @@ export interface HeroCandidate {
   mmsi: string
   vesselType: VesselType
   sogKn: number
+  opacity: number
 }
 
 export interface HeroSlot {
@@ -48,7 +51,18 @@ export function createHeroStateRef(): HeroStateRef {
 }
 
 function isEligible(candidate: HeroCandidate): boolean {
-  return candidate.vesselType !== 'unknown' && candidate.sogKn >= HERO_MIN_SOG_KN
+  // Entry rule: not unknown, above the stopped-hull boundary, and fully
+  // opaque. A non-hero may only enter at opacity 1.0 -- a kept slot may
+  // drop below 1.0 but a newcomer may not.
+  return candidate.vesselType !== 'unknown' && candidate.sogKn >= HERO_MIN_SOG_KN && candidate.opacity === 1.0
+}
+
+// An EXISTING hero slot is kept while its candidate is not unknown, is
+// at or above HERO_KEEP_SOG_KN, and is at or above HERO_KEEP_MIN_OPACITY.
+// This is the softer rule that lets a hero survive a brief slow-down or a
+// report gap; it applies only to a slot that already exists.
+function isKeptSlotCandidate(candidate: HeroCandidate): boolean {
+  return candidate.vesselType !== 'unknown' && candidate.sogKn >= HERO_KEEP_SOG_KN && candidate.opacity >= HERO_KEEP_MIN_OPACITY
 }
 
 // Descending by VESSEL_BASE_SIZES, then descending by sogKn, then
@@ -88,7 +102,8 @@ export function updateHeroes(prev: HeroState, candidates: HeroCandidate[], nowMs
   const slots: HeroSlot[] = []
   for (const slot of prev.slots) {
     const candidate = byMmsi.get(slot.mmsi)
-    if (candidate !== undefined && isEligible(candidate)) {
+    // An existing slot is kept by the keep rule, not the entry rule.
+    if (candidate !== undefined && isKeptSlotCandidate(candidate)) {
       slots.push(slot)
     } else {
       cooldownUntil.set(slot.mmsi, nowMs + HERO_REENTRY_COOLDOWN_MS)
