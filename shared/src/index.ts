@@ -5,4 +5,4 @@ export * from './vessel.ts'
 export * from './track.ts'
 export * from './vesselState.ts'
 export * from './basemap.ts'
-
+export * from './zoom.ts'
