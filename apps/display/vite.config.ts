@@ -48,7 +48,9 @@ export default defineConfig(({ mode }) => {
       // is 'dover' (the default), so the browser bundle never sees an
       // undefined variable.
       'import.meta.env.WAKE_AREA': JSON.stringify(env.WAKE_AREA ?? ''),
-      'import.meta.env.WAKE_LOCAL_AREAS': JSON.stringify(wakeLocalAreas),
+      'import.meta.env.WAKE_LOCAL_AREAS': JSON.stringify(
+        wakeLocalAreas === null ? '' : JSON.stringify(wakeLocalAreas),
+      ),
     }
   }
 })
