@@ -100,9 +100,76 @@ Add `WAKE_AREA` to your `.env` to change the view. Four areas are built in:
 WAKE_AREA=istanbul
 ```
 
-Leave it out entirely and you get `dover`. A value that is not one of those four
-makes the server refuse to start and tell you the valid list, rather than
-starting on something you did not ask for.
+Leave it out entirely and you get `dover`. A value that is not a built-in or a
+valid key in your local `areas.local.json` makes the server refuse to start and
+tell you the valid list, rather than starting on something you did not ask for.
+
+### Your own area
+
+You can also define a custom area in a repo-root file called `areas.local.json`.
+That file lives beside `package.json`, and it can add one or more local areas in
+addition to the built-ins. The same file can also define basemap entries for any
+custom `.pmtiles` archives you want to draw underneath the ships.
+
+Example:
+
+```json
+{
+  "areas": {
+    "mombasa": {
+      "displayName": "Mombasa",
+      "centerLat": -4.0435,
+      "centerLon": 39.6682,
+      "radiusNm": 20,
+      "pmtilesUrl": "/tiles/mombasa-z11.pmtiles"
+    }
+  },
+  "basemaps": {
+    "dover": {
+      "pmtilesUrl": "/tiles/dover-z11.pmtiles"
+    }
+  }
+}
+```
+
+Set `WAKE_AREA=mombasa` and the display/server will use the local definition. If
+there is no matching area key, the app falls back to `dover` instead of starting
+on an unintended view.
+
+Install the PMTiles command-line tool before generating a map. On Windows,
+download the Windows x86_64 zip from
+[the go-pmtiles releases](https://github.com/protomaps/go-pmtiles/releases),
+extract `pmtiles.exe`, and place it in the repository's `tools` folder. On
+other platforms, install `pmtiles` and make sure it is on your `PATH`.
+
+Right-click your location in Google Maps to copy its coordinates; the first
+number is latitude and the second is longitude. Custom radii must be between
+5 and 40 nautical miles. The default is 20 nm; larger extracts can be
+substantially bigger, so start smaller if disk space or download time matters.
+
+Generate a custom area from a Protomaps archive or URL:
+
+```bash
+pnpm make-area --name "Mombasa" --lat -4.0435 --lon 39.6682 --radius 20 --source /path/to/your-area.pmtiles
+```
+
+Or omit the coordinates and answer the prompts:
+
+```bash
+pnpm make-area
+```
+
+The script writes `areas.local.json` for you and will refuse to proceed if the
+input does not match the repo's validation rules. Add `WAKE_AREA=mombasa` to
+your repo-root `.env`, then restart **both the server and the display**. The
+local `areas.local.json` is ignored by git and is never committed.
+
+Town names are not inferred from the archive. To draw them, add place entries
+by hand to the area's `places` array, for example:
+
+```json
+"places": [{ "name": "Mombasa", "lat": -4.0435, "lon": 39.6682 }]
+```
 
 ### Zoom
 

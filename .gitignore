@@ -17,6 +17,7 @@ server/.aisstream.lock
 server/captures/
 *.ndjson
 *.jsonl
+/areas.local.json
 
 # Local scratch scripts, never committed
 server/tools/
@@ -28,4 +29,3 @@ server/tools/
 
 # Local throwaway audit folders
 *-audit/
-
