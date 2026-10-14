@@ -152,7 +152,11 @@ async function main(): Promise<void> {
       for (const error of validated.errors) console.error(error)
       process.exit(1)
     }
-    args = validated.value
+    args = {
+      ...validated.value,
+      overwrite: args.overwrite,
+      dryRun: args.dryRun,
+    }
   }
 
   const binaryPath = findPmtilesBinary(repoRoot)

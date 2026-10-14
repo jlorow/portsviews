@@ -183,7 +183,7 @@ export function parseMakeAreaArgs(args: readonly string[]): { ok: true; value: M
     return { ok: false, errors: ['--source and --build-date must be used with --builtin or a complete custom area (--name, --lat and --lon).'] }
   }
 
-  return { ok: true, value: { mode: 'interactive' } }
+  return { ok: true, value: { ...value, mode: 'interactive' } }
 }
 
 export function isValidDateCode(raw: string): boolean {

@@ -30,6 +30,7 @@ function assertParseError(args: string[], expected: string, label: string): void
 
 assertEqual(parseMakeAreaArgs([]), { ok: true, value: { mode: 'interactive' } }, 'arguments: no options selects interactive prompts')
 assertEqual(parseMakeAreaArgs(['--help']), { ok: true, value: { help: true, mode: 'help' } }, 'arguments: help mode')
+assertEqual(parseMakeAreaArgs(['--overwrite', '--dry-run']), { ok: true, value: { overwrite: true, dryRun: true, mode: 'interactive' } }, 'arguments: interactive mode preserves overwrite and dry-run flags')
 
 const customDefault = parseMakeAreaArgs(['--name', 'Mombasa', '--lat', '-4.0435', '--lon', '39.6682'])
 assert(customDefault.ok && customDefault.value.mode === 'custom' && customDefault.value.radius === 20, 'arguments: custom mode defaults radius to 20')
