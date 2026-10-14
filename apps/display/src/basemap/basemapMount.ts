@@ -52,6 +52,8 @@ export interface BasemapMountOptions {
 export interface BasemapHandle {
   /** Re-fit the camera after a window resize. */
   resize(canvasWidth: number, canvasHeight: number): void
+  /** Update the camera scale without animation. */
+  setRadius(radiusNm: number): void
   /** Swap the land brightness (tune key F). Rebuilds the style. */
   setLandLevel(landLevel: LandLevel): void
   /** Show/hide without tearing the WebGL context down (tune key M). */
@@ -75,6 +77,9 @@ export function mountBasemap(options: BasemapMountOptions): BasemapHandle {
     canvasHeight,
   } = options
   let landLevel = options.landLevel
+  let currentRadiusNm = radiusNm
+  let currentWidth = canvasWidth
+  let currentHeight = canvasHeight
 
   container.style.transform = basemapContainerTransform(projConfig)
 
@@ -113,8 +118,14 @@ export function mountBasemap(options: BasemapMountOptions): BasemapHandle {
 
   return {
     resize(width: number, height: number) {
-      map.setZoom(basemapZoom(width, height, centerLat, radiusNm))
+      currentWidth = width
+      currentHeight = height
+      map.setZoom(basemapZoom(width, height, centerLat, currentRadiusNm), { duration: 0 })
       map.resize()
+    },
+    setRadius(nextRadiusNm: number) {
+      currentRadiusNm = nextRadiusNm
+      map.setZoom(basemapZoom(currentWidth, currentHeight, centerLat, currentRadiusNm), { duration: 0 })
     },
     setLandLevel(next: LandLevel) {
       landLevel = next

@@ -167,7 +167,7 @@ assert(formatFps(60) === '60' && formatFps(31) === '31', 'formatFps passes a rea
 
 // The same distinction, in the string the ceiling actually reads.
 {
-  const status = { basemapAvailable: true, vesselCount: 51, fps: null as number | null }
+  const status = { basemapAvailable: true, radiusNm: 20, vesselCount: 51, fps: null as number | null }
   const pending = tuneOverlayText(DEFAULT_CONFIG, status)
   const zero = tuneOverlayText(DEFAULT_CONFIG, { ...status, fps: 0 })
   const sixty = tuneOverlayText(DEFAULT_CONFIG, { ...status, fps: 60 })
@@ -181,6 +181,7 @@ assert(formatFps(60) === '60' && formatFps(31) === '31', 'formatFps passes a rea
     'the pending overlay contains no "FPS 0" anywhere -- which is exactly what the VIS-9 look misread',
   )
   assert(pending.includes('Vessels 51'), 'the vessel count is shown even while FPS has no sample yet (the combination the look reported)')
+  assert(pending.includes('Radius 20nm'), 'the current radius is included in the tune status line')
 }
 
 // --- the sampling window ---
@@ -197,7 +198,7 @@ assert(
 // --- the overlay text reflects the settings it claims to ---
 
 {
-  const status = { basemapAvailable: true, vesselCount: 7, fps: 42 }
+  const status = { basemapAvailable: true, radiusNm: 20, vesselCount: 7, fps: 42 }
   const text = tuneOverlayText(DEFAULT_CONFIG, status)
   assert(text.includes(`Land ${LAND_LEVELS[DEFAULT_CONFIG.basemapLand].name}`), `the overlay names the default land level (${LAND_LEVELS[DEFAULT_CONFIG.basemapLand].name})`)
   assert(text.includes('Basemap on'), 'basemap available and enabled reads "Basemap on"')

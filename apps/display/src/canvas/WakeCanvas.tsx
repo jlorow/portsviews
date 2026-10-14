@@ -4,6 +4,9 @@ import {
   DEMO_AREAS,
   parseDemoArea,
   basemapAreaFor,
+  radiusStepsFor,
+  stepRadius,
+  zoomKeyAction,
   type DemoAreaKey,
   type DisplayConfig,
 } from '@wake/shared'
@@ -40,12 +43,8 @@ const AREA = DEMO_AREAS[areaKey]
 // drew before that story -- pure black, no MapLibre context created at all.
 const BASEMAP_AREA = basemapAreaFor(areaKey)
 
-// VIS-9: the ONE view the basemap camera, the place names and the
-// attribution are all computed from. These are byte-identical to the AREA
-// fields the renderFrame call below still passes directly; the render call
-// is left reading its own area constant so the diff over the rendering is
-// empty.
-const VIEW = { centerLat: AREA.centerLat, centerLon: AREA.centerLon, radiusNm: AREA.radiusNm }
+// The area centre is fixed; radiusNmRef below owns the live view radius.
+const VIEW = { centerLat: AREA.centerLat, centerLon: AREA.centerLon }
 
 // VIS-9: ONE projection config, read by mapProject (through renderFrame),
 // by the place-name text, and by the basemap container's CSS transform.
@@ -80,6 +79,7 @@ export default function WakeCanvas() {
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const vesselStateRef = useRef<VesselStateMap>(new Map())
   const trackedRef = useRef(createTrackedVesselMap())
+  const radiusNmRef = useRef(AREA.radiusNm)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
 
   // VIS-6 tune mode: a runtime copy of DEFAULT_CONFIG the H/W/R/J keys
@@ -125,7 +125,8 @@ export default function WakeCanvas() {
   // D (stoppedAsDot), K (legendEnabled) and G (glyphScale -- a dev-only
   // comparison key for the look, NOT S7.4's planned user-facing toggle).
   // VIS-9 adds M (basemapEnabled), F (basemapLand) and N (placeNamesEnabled).
-  // No listener at all outside ?tune=1.
+  // This tune-key listener exists only inside ?tune=1; zoom keys are handled
+  // by a separate listener below.
   //
   // VIS-9 part 2 moved the mapping itself into tuneOverlay.ts's
   // applyTuneKey, which is pure and therefore testable -- a React key
@@ -143,6 +144,37 @@ export default function WakeCanvas() {
     return () => globalThis.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target
+      const targetIsEditable =
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      const action = zoomKeyAction({
+        key: event.key,
+        repeat: event.repeat,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        targetIsEditable,
+      })
+      if (action === null) return
+
+      event.preventDefault()
+      const nextRadiusNm =
+        action === 'reset'
+          ? AREA.radiusNm
+          : stepRadius(radiusStepsFor(AREA.radiusNm), radiusNmRef.current, action)
+      if (nextRadiusNm === radiusNmRef.current) return
+
+      radiusNmRef.current = nextRadiusNm
+      basemapRef.current?.setRadius(nextRadiusNm)
+    }
+
+    globalThis.addEventListener('keydown', handleKeyDown)
+    return () => globalThis.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
   // VIS-6/VIS-7 tune mode: the overlay text (never drawn on the canvas)
   // refreshes once a second from configRef/fpsRef -- no interval and no
   // DOM node outside ?tune=1.
@@ -152,6 +184,7 @@ export default function WakeCanvas() {
     const update = () => {
       const status = {
         basemapAvailable: BASEMAP_AREA !== undefined,
+        radiusNm: radiusNmRef.current,
         vesselCount: vesselCountRef.current,
         fps: fpsRef.current,
       }
@@ -188,7 +221,7 @@ export default function WakeCanvas() {
         area: BASEMAP_AREA,
         centerLat: VIEW.centerLat,
         centerLon: VIEW.centerLon,
-        radiusNm: VIEW.radiusNm,
+        radiusNm: radiusNmRef.current,
         landLevel: configRef.current.basemapLand,
         projConfig: PROJ_CONFIG,
         canvasWidth: globalThis.innerWidth,
@@ -273,7 +306,7 @@ export default function WakeCanvas() {
           BASEMAP_AREA.places,
           VIEW.centerLat,
           VIEW.centerLon,
-          VIEW.radiusNm,
+          radiusNmRef.current,
           PROJ_CONFIG,
           canvas.width,
           canvas.height,
@@ -283,7 +316,7 @@ export default function WakeCanvas() {
       renderFrame(trackedRef.current, vesselStateRef.current, ctx, {
         centerLat: AREA.centerLat,
         centerLon: AREA.centerLon,
-        radiusNm: AREA.radiusNm,
+        radiusNm: radiusNmRef.current,
         projConfig: PROJ_CONFIG,
         canvasWidth: canvas.width,
         canvasHeight: canvas.height,

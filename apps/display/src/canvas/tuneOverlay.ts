@@ -49,6 +49,7 @@ export function formatFps(fps: number | null): string {
 export interface TuneOverlayStatus {
   /** false when this area has no tile extract, so the basemap reads "n/a". */
   basemapAvailable: boolean
+  radiusNm: number
   vesselCount: number
   /** null until the first FPS window has closed. */
   fps: number | null
@@ -62,7 +63,7 @@ export interface TuneOverlayStatus {
 export function tuneOverlayText(config: DisplayConfig, status: TuneOverlayStatus): string {
   const onOff = (value: boolean) => (value ? 'on' : 'off')
   return (
-    `Heroes ${onOff(config.heroesEnabled)} · Glow ${onOff(config.glowEnabled)} · Rings ${onOff(config.rangeRingsEnabled)}` +
+    `Radius ${status.radiusNm}nm · Heroes ${onOff(config.heroesEnabled)} · Glow ${onOff(config.glowEnabled)} · Rings ${onOff(config.rangeRingsEnabled)}` +
     ` · Hero size ${config.heroScale} · Glyph ${config.glyphScale} · Labels ${config.labelSize}` +
     ` · Title ${onOff(config.areaTitleEnabled)} · Unknown ${config.unknownScale} · Sweep ${config.sweepPeriodSec}s` +
     ` · Dots ${onOff(config.stoppedAsDot)} · Legend ${onOff(config.legendEnabled)}` +
