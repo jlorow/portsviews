@@ -144,8 +144,9 @@ other platforms, install `pmtiles` and make sure it is on your `PATH`.
 
 Right-click your location in Google Maps to copy its coordinates; the first
 number is latitude and the second is longitude. Custom radii must be between
-5 and 40 nautical miles. The default is 20 nm; larger extracts can be
-substantially bigger, so start smaller if disk space or download time matters.
+5 and 40 nautical miles. The default is 20 nm. The three built-in areas at
+20 nm come to roughly 1-7 MB, Dover is about 10 MB, and bigger radii or busier
+coasts are larger (a 40 nm radius is several times bigger than a 20 nm one).
 
 Generate a custom area from a Protomaps archive or URL:
 
