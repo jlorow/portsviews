@@ -104,6 +104,13 @@ Leave it out entirely and you get `dover`. A value that is not one of those four
 makes the server refuse to start and tell you the valid list, rather than
 starting on something you did not ask for.
 
+### Zoom
+
+Press `=` or `+` to zoom in, `-` to zoom out, and `0` to reset. The built-in
+areas step through 20, 10 and 5 nm. Ctrl, Alt and Cmd combinations are ignored
+so the browser's own zoom still works. Add `?tune=1` for the tuning keys and
+the radius status line.
+
 ## What you will see
 
 Ships are drawn as hulls, coloured and sized by type — cargo, tanker, ferry,
