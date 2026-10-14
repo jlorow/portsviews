@@ -1,6 +1,5 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import readline from 'node:readline/promises'
 import { DEFAULT_RADIUS_NM, DEMO_AREAS, parseLocalAreas, slugify, type LocalAreasFile } from '@wake/shared'
@@ -14,6 +13,7 @@ import {
   isValidDateCode,
   mergeLocalAreaRecord,
   parseMakeAreaArgs,
+  runPmtiles,
   type MakeAreaArgs,
 } from './makeAreaCore.ts'
 
@@ -68,7 +68,7 @@ function buildSourceUrl(date: string): string {
 }
 
 function tryPmtilesShow(binaryPath: string, source: string): { ok: boolean; stdout?: string; stderr?: string } {
-  const result = spawnSync(binaryPath, ['show', source], { encoding: 'utf8' })
+  const result = runPmtiles(binaryPath, ['show', source])
   return {
     ok: result.status === 0,
     stdout: typeof result.stdout === 'string' ? result.stdout : '',
@@ -104,7 +104,7 @@ function printPlacesNote(): void {
 }
 
 function showArchive(binaryPath: string, archivePath: string): boolean {
-  const result = spawnSync(binaryPath, ['show', archivePath], { encoding: 'utf8' })
+  const result = runPmtiles(binaryPath, ['show', archivePath])
   if (result.status !== 0) {
     console.error(`Could not inspect the extracted PMTiles archive ${archivePath}.`)
     console.error((result.stderr ?? '').toString() || (result.stdout ?? '').toString() || 'pmtiles show failed.')
@@ -186,7 +186,7 @@ async function main(): Promise<void> {
       kind: 'builtin',
       key,
       value: buildBasemapRecord(`/tiles/${key}-z11.pmtiles`),
-      overwrite: args.overwrite,
+      overwrite: args.overwrite || args.dryRun,
     }))
   } else {
     const customArgs = args as MakeAreaArgs & { name: string; lat: number; lon: number; radius?: number }
@@ -206,12 +206,12 @@ async function main(): Promise<void> {
       kind: 'custom',
       key,
       value: buildCustomAreaRecord(customArgs.name, centerLat, centerLon, radiusNm),
-      overwrite: args.overwrite,
+      overwrite: args.overwrite || args.dryRun,
     }))
   }
 
   const tilePath = path.join(repoRoot, 'apps', 'display', 'public', 'tiles', `${key}-z11.pmtiles`)
-  if (fs.existsSync(tilePath) && !args.overwrite) {
+  if (fs.existsSync(tilePath) && !args.overwrite && !args.dryRun) {
     console.error(`Refusing to overwrite ${tilePath}. Add --overwrite to replace it.`)
     process.exit(1)
   }
@@ -255,10 +255,10 @@ async function main(): Promise<void> {
   const tempPath = `${tilePath}.${process.pid}.tmp`
   const extractArgs = buildExtractArgs(chosenSource!, tempPath, centerLat, centerLon, radiusNm)
   if (args.dryRun) {
-    console.log(`Dry run: would run pmtiles ${extractArgs.join(' ')}`)
+    console.log(`Dry run: would run pmtiles with arguments ${JSON.stringify(extractArgs)}`)
   } else {
     fs.mkdirSync(path.dirname(tilePath), { recursive: true })
-    const extraction = spawnSync(binaryPath, extractArgs, { encoding: 'utf8' })
+    const extraction = runPmtiles(binaryPath, extractArgs)
     if (extraction.status !== 0) {
       const cleanupError = removeTemp(tempPath)
       console.error((extraction.stderr ?? '').toString() || (extraction.stdout ?? '').toString() || 'Extraction failed.')

@@ -27,6 +27,27 @@ export interface BinaryLookupDeps {
   }
 }
 
+function hasControlCharacters(value: string): boolean {
+  return /[\u0000-\u001f\u007f]/.test(value)
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' && url.hostname.length > 0
+  } catch {
+    return false
+  }
+}
+
+function isExistingFile(source: string): boolean {
+  try {
+    return fs.statSync(source).isFile()
+  } catch {
+    return false
+  }
+}
+
 export function parseMakeAreaArgs(args: readonly string[]): { ok: true; value: MakeAreaArgs } | { ok: false; errors: string[] } {
   if (args.length === 0) {
     return { ok: true, value: { mode: 'interactive' } }
@@ -148,6 +169,18 @@ export function parseMakeAreaArgs(args: readonly string[]): { ok: true; value: M
     return { ok: true, value }
   }
 
+  if (value.name !== undefined) {
+    const trimmedName = value.name.trim()
+    const error = validateAreaName(value.name)
+    if (error) return { ok: false, errors: [error] }
+    value.name = trimmedName
+  }
+
+  if (value.source !== undefined) {
+    const error = validateSourceArgument(value.source)
+    if (error) return { ok: false, errors: [error] }
+  }
+
   if (value.source && value.buildDate) {
     return { ok: false, errors: ['Choose either --source or --build-date, not both.'] }
   }
@@ -229,27 +262,62 @@ export function findPmtilesBinary(
   deps: BinaryLookupDeps = {
     existsSync: fs.existsSync,
     spawnSync: (command: string, args?: readonly string[], options?: { encoding?: BufferEncoding; shell?: boolean }) =>
-      spawnSync(command, args ?? [], { ...options, shell: true }),
+      spawnSync(command, args ?? [], { ...options, shell: false }),
   },
 ): string | null {
-  const pathCheck = (command: string, args: readonly string[]) => {
-    try {
-      const result = deps.spawnSync(command, args, { encoding: 'utf8', shell: false })
-      return result.status === 0 ? command : null
-    } catch {
-      return null
+  const pathLookup = process.platform === 'win32' ? 'where.exe' : 'which'
+  try {
+    const result = deps.spawnSync(pathLookup, ['pmtiles'], { encoding: 'utf8', shell: false })
+    if (result.status === 0) {
+      const resolved = (result.stdout ?? '').toString().split(/\r?\n/, 1)[0].trim()
+      if (resolved) return resolved
     }
+  } catch {
+    // Continue with the project-local binary fallback.
   }
 
-  const onPath = pathCheck('pmtiles', ['version'])
-  if (onPath) return onPath
-
-  const candidates = [path.join(repoRoot, 'tools', 'pmtiles.exe'), path.join(repoRoot, 'tools', 'pmtiles')]
-  for (const candidate of candidates) {
-    if (deps.existsSync(candidate)) return candidate
-  }
+  const localBinary = path.join(repoRoot, 'tools', 'pmtiles.exe')
+  if (deps.existsSync(localBinary)) return localBinary
 
   return null
+}
+
+export function validateSourceArgument(
+  source: string,
+): string | null {
+  if (hasControlCharacters(source)) {
+    return 'Source must not contain control characters or newlines.'
+  }
+  if (isHttpsUrl(source) || isExistingFile(source)) return null
+  return 'Source must be an HTTPS URL or the path to an existing local file.'
+}
+
+export function validateAreaName(name: string): string | null {
+  const trimmedName = name.trim()
+  if (hasControlCharacters(name) || trimmedName.length < 1 || trimmedName.length > 40) {
+    return 'Area name must contain 1 to 40 non-control characters.'
+  }
+  return null
+}
+
+export interface PmtilesRunResult {
+  status: number | null
+  stdout?: string | Uint8Array | Buffer
+  stderr?: string | Uint8Array | Buffer
+}
+
+export type PmtilesRunner = (
+  binaryPath: string,
+  args: readonly string[],
+  options: { encoding: 'utf8'; shell: false },
+) => PmtilesRunResult
+
+export function runPmtiles(
+  binaryPath: string,
+  args: readonly string[],
+  runner: PmtilesRunner = (binary, argv, options) => spawnSync(binary, [...argv], options),
+): PmtilesRunResult {
+  return runner(binaryPath, [...args], { encoding: 'utf8', shell: false })
 }
 
 export function mergeLocalAreaRecord(
