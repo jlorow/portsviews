@@ -50,9 +50,15 @@ export interface BasemapMountOptions {
 }
 
 export interface BasemapHandle {
-  /** Re-fit the camera after a window resize. */
+  /** Re-fit the camera after a window resize, keeping the CURRENT view. */
   resize(canvasWidth: number, canvasHeight: number): void
-  /** Update the camera scale without animation. */
+  /**
+   * Move the camera to a view centre and radius, with no animation: the
+   * canvas underneath has already jumped, and a MapLibre ease would slide
+   * the map out from under the ships for its duration.
+   */
+  setView(centerLat: number, centerLon: number, radiusNm: number): void
+  /** Zoom only, keeping the current centre. A thin wrapper over setView. */
   setRadius(radiusNm: number): void
   /** Swap the land brightness (tune key F). Rebuilds the style. */
   setLandLevel(landLevel: LandLevel): void
@@ -77,6 +83,11 @@ export function mountBasemap(options: BasemapMountOptions): BasemapHandle {
     canvasHeight,
   } = options
   let landLevel = options.landLevel
+  // The camera's own copy of the view. It is the ONLY thing resize() reads,
+  // so a resize after a pan must keep the panned centre rather than snap
+  // back to the area's.
+  let currentCenterLat = centerLat
+  let currentCenterLon = centerLon
   let currentRadiusNm = radiusNm
   let currentWidth = canvasWidth
   let currentHeight = canvasHeight
@@ -116,16 +127,37 @@ export function mountBasemap(options: BasemapMountOptions): BasemapHandle {
     )
   })
 
+  // One place that moves the camera, so setView and setRadius cannot drift
+  // apart. jumpTo, not easeTo: no animation.
+  const applyView = (nextCenterLat: number, nextCenterLon: number, nextRadiusNm: number): void => {
+    currentCenterLat = nextCenterLat
+    currentCenterLon = nextCenterLon
+    currentRadiusNm = nextRadiusNm
+    map.jumpTo({
+      center: [currentCenterLon, currentCenterLat],
+      zoom: basemapZoom(currentWidth, currentHeight, currentCenterLat, currentRadiusNm),
+    })
+  }
+
   return {
     resize(width: number, height: number) {
       currentWidth = width
       currentHeight = height
-      map.setZoom(basemapZoom(width, height, centerLat, currentRadiusNm), { duration: 0 })
+      // The zoom depends on the window size AND on the current view, so it
+      // is recomputed from the live centre and radius, never from the ones
+      // this map was mounted with.
+      map.jumpTo({
+        center: [currentCenterLon, currentCenterLat],
+        zoom: basemapZoom(width, height, currentCenterLat, currentRadiusNm),
+      })
       map.resize()
     },
+    setView(nextCenterLat: number, nextCenterLon: number, nextRadiusNm: number) {
+      applyView(nextCenterLat, nextCenterLon, nextRadiusNm)
+    },
     setRadius(nextRadiusNm: number) {
-      currentRadiusNm = nextRadiusNm
-      map.setZoom(basemapZoom(currentWidth, currentHeight, centerLat, currentRadiusNm), { duration: 0 })
+      // Kept because it is the smaller change for a caller that only zooms.
+      applyView(currentCenterLat, currentCenterLon, nextRadiusNm)
     },
     setLandLevel(next: LandLevel) {
       landLevel = next

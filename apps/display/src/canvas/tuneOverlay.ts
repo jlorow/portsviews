@@ -45,14 +45,35 @@ export function formatFps(fps: number | null): string {
   return fps === null ? FPS_PENDING : String(fps)
 }
 
-/** Only the two fields that are not part of DisplayConfig. */
+/** Only the fields that are not part of DisplayConfig. */
 export interface TuneOverlayStatus {
   /** false when this area has no tile extract, so the basemap reads "n/a". */
   basemapAvailable: boolean
   radiusNm: number
+  /** North-positive offset of the view centre from the area centre, in nm. */
+  centerOffsetLatNm: number
+  /** East-positive offset of the view centre from the area centre, in nm. */
+  centerOffsetLonNm: number
   vesselCount: number
   /** null until the first FPS window has closed. */
   fps: number | null
+}
+
+/**
+ * The view readout: radius, then how far the centre has been panned from
+ * the area's own centre, in nautical miles -- "View 5nm N+1.2 E-0.4".
+ *
+ * The sign is printed for both axes, including the zero case, so the line
+ * never reads as two different formats and a pan of 0.04 nm cannot print as
+ * "-0.0" after rounding: the ROUNDED value decides the sign.
+ */
+export function formatView(radiusNm: number, offsetLatNm: number, offsetLonNm: number): string {
+  const axis = (offsetNm: number, positive: string, negative: string) => {
+    const rounded = Math.round(offsetNm * 10) / 10
+    const sign = rounded < 0 ? negative : positive
+    return `${sign}${Math.abs(rounded).toFixed(1)}`
+  }
+  return `View ${radiusNm}nm N${axis(offsetLatNm, '+', '-')} E${axis(offsetLonNm, '+', '-')}`
 }
 
 /**
@@ -63,7 +84,7 @@ export interface TuneOverlayStatus {
 export function tuneOverlayText(config: DisplayConfig, status: TuneOverlayStatus): string {
   const onOff = (value: boolean) => (value ? 'on' : 'off')
   return (
-    `Radius ${status.radiusNm}nm · Heroes ${onOff(config.heroesEnabled)} · Glow ${onOff(config.glowEnabled)} · Rings ${onOff(config.rangeRingsEnabled)}` +
+    `${formatView(status.radiusNm, status.centerOffsetLatNm, status.centerOffsetLonNm)} · Heroes ${onOff(config.heroesEnabled)} · Glow ${onOff(config.glowEnabled)} · Rings ${onOff(config.rangeRingsEnabled)}` +
     ` · Hero size ${config.heroScale} · Glyph ${config.glyphScale} · Labels ${config.labelSize}` +
     ` · Title ${onOff(config.areaTitleEnabled)} · Unknown ${config.unknownScale} · Sweep ${config.sweepPeriodSec}s` +
     ` · Dots ${onOff(config.stoppedAsDot)} · Legend ${onOff(config.legendEnabled)}` +

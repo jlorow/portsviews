@@ -2,15 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_CONFIG,
   DEMO_AREAS,
+  clampPanToFeed,
+  panCenter,
+  panKeyAction,
   parseLocalAreas,
+  radiusStepsFor,
   resolveArea,
   basemapFor,
-  radiusStepsFor,
   stepRadius,
+  wheelZoomAction,
   zoomKeyAction,
   type DemoAreaKey,
   type DisplayConfig,
   type LocalAreasFile,
+  type PanDirection,
 } from '@wake/shared'
 import ConnectionIndicator from '../ConnectionIndicator'
 import {
@@ -61,8 +66,15 @@ const AREA = RESOLVED_AREA?.area ?? DEMO_AREAS[areaKey as DemoAreaKey]
 // drew before that story -- pure black, no MapLibre context created at all.
 const BASEMAP_AREA = basemapFor(areaKey, localAreas)
 
-// The area centre is fixed; radiusNmRef below owns the live view radius.
-const VIEW = { centerLat: AREA.centerLat, centerLon: AREA.centerLon }
+// The area's own centre and radius. These are the CONSTANTS a reset returns
+// to and the reference the ?tune=1 overlay measures the view's offset
+// against; the LIVE view is viewRef, below, and nothing draws from these.
+// AREA.boundingBoxes is the box the live feed covers, which is what
+// clampPanToFeed keeps the view inside.
+const AREA_CENTRE_LAT = AREA.centerLat
+const AREA_CENTRE_LON = AREA.centerLon
+const AREA_RADIUS_NM = AREA.radiusNm
+const FEED_BOX = AREA.boundingBoxes
 
 // VIS-9: ONE projection config, read by mapProject (through renderFrame),
 // by the place-name text, and by the basemap container's CSS transform.
@@ -75,6 +87,15 @@ const PROJ_CONFIG = { mirrorX: DEFAULT_CONFIG.mirrorX, rotationDeg: DEFAULT_CONF
 // rings/hero-size, for the ceiling look session. Read once at module
 // load, same pattern as AREA_KEY -- this component only ever mounts once.
 const TUNE_MODE = new URLSearchParams(globalThis.location.search).get('tune') === '1'
+
+// The runtime view: where the display is looking and how far out. One ref,
+// read every frame by every consumer, so a pan or a zoom needs no React
+// re-render and no second copy of the centre anywhere.
+interface WakeView {
+  centerLat: number
+  centerLon: number
+  radiusNm: number
+}
 
 // window.location.hostname rather than a hardcoded 'localhost' -- the
 // display and the server are not guaranteed to be the same machine.
@@ -92,12 +113,31 @@ function createBrowserSocket(url: string): WakeSocketLike {
   return new WebSocket(url) as unknown as WakeSocketLike
 }
 
+// A key event aimed at a text field belongs to that field, not to us.
+// Extracted because three listeners now share this rule.
+function targetIsEditable(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLElement &&
+    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+  )
+}
+
 export default function WakeCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const mapContainerRef = useRef<HTMLDivElement>(null)
   const vesselStateRef = useRef<VesselStateMap>(new Map())
   const trackedRef = useRef(createTrackedVesselMap())
-  const radiusNmRef = useRef(AREA.radiusNm)
+  // One runtime view for the whole display: centre and radius together, so a
+  // zoom can also re-clamp the centre (zooming out shrinks the room to pan)
+  // and a reset can put both back at once.
+  const viewRef = useRef<WakeView>({
+    centerLat: AREA_CENTRE_LAT,
+    centerLon: AREA_CENTRE_LON,
+    radiusNm: AREA_RADIUS_NM,
+  })
+  // Wheel steps are rate-limited: the last step's time, in the same clock
+  // wheelZoomAction is handed. 0 means "no step yet this session".
+  const lastWheelStepMsRef = useRef(0)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
 
   // VIS-6 tune mode: a runtime copy of DEFAULT_CONFIG the H/W/R/J keys
@@ -143,8 +183,8 @@ export default function WakeCanvas() {
   // D (stoppedAsDot), K (legendEnabled) and G (glyphScale -- a dev-only
   // comparison key for the look, NOT S7.4's planned user-facing toggle).
   // VIS-9 adds M (basemapEnabled), F (basemapLand) and N (placeNamesEnabled).
-  // This tune-key listener exists only inside ?tune=1; zoom keys are handled
-  // by a separate listener below.
+  // This tune-key listener exists only inside ?tune=1; zoom, pan and wheel
+  // keys are handled by separate listeners below.
   //
   // VIS-9 part 2 moved the mapping itself into tuneOverlay.ts's
   // applyTuneKey, which is pure and therefore testable -- a React key
@@ -162,35 +202,104 @@ export default function WakeCanvas() {
     return () => globalThis.removeEventListener('keydown', handleKeyDown)
   }, [])
 
+  // Zoom keys, arrow keys and the mouse wheel. All three move viewRef and
+  // then push the result to the basemap camera; nothing here re-renders
+  // React, because the canvas reads viewRef every frame anyway.
+  //
+  // Deliberately NOT behind TUNE_MODE: zooming is part of the display, and
+  // the same keys are what the README documents.
   useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target
-      const targetIsEditable =
-        target instanceof HTMLElement &&
-        (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+    const applyView = () => {
+      const view = viewRef.current
+      basemapRef.current?.setView(view.centerLat, view.centerLon, view.radiusNm)
+    }
+
+    const zoomBy = (direction: 'in' | 'out') => {
+      const view = viewRef.current
+      const nextRadiusNm = stepRadius(radiusStepsFor(AREA_RADIUS_NM), view.radiusNm, direction)
+      // Zooming out takes room away from the centre, so the clamp is
+      // re-applied on every step, not only on a pan: zoom out while panning
+      // far out and the view must slide back inside the feed box.
+      const clamped = clampPanToFeed(view.centerLat, view.centerLon, nextRadiusNm, FEED_BOX)
+      viewRef.current = {
+        centerLat: clamped.centerLat,
+        centerLon: clamped.centerLon,
+        radiusNm: nextRadiusNm,
+      }
+      applyView()
+    }
+
+    const panBy = (direction: PanDirection) => {
+      const view = viewRef.current
+      const moved = panCenter(view.centerLat, view.centerLon, direction, view.radiusNm, PROJ_CONFIG)
+      const clamped = clampPanToFeed(moved.centerLat, moved.centerLon, view.radiusNm, FEED_BOX)
+      viewRef.current = { ...view, centerLat: clamped.centerLat, centerLon: clamped.centerLon }
+      applyView()
+    }
+
+    const handleZoomKeyDown = (event: KeyboardEvent) => {
       const action = zoomKeyAction({
         key: event.key,
         repeat: event.repeat,
         ctrlKey: event.ctrlKey,
         metaKey: event.metaKey,
         altKey: event.altKey,
-        targetIsEditable,
+        targetIsEditable: targetIsEditable(event.target),
       })
       if (action === null) return
 
       event.preventDefault()
-      const nextRadiusNm =
-        action === 'reset'
-          ? AREA.radiusNm
-          : stepRadius(radiusStepsFor(AREA.radiusNm), radiusNmRef.current, action)
-      if (nextRadiusNm === radiusNmRef.current) return
-
-      radiusNmRef.current = nextRadiusNm
-      basemapRef.current?.setRadius(nextRadiusNm)
+      if (action === 'reset') {
+        // '0' resets zoom AND pan, both halves of the view.
+        viewRef.current = {
+          centerLat: AREA_CENTRE_LAT,
+          centerLon: AREA_CENTRE_LON,
+          radiusNm: AREA_RADIUS_NM,
+        }
+        applyView()
+        return
+      }
+      zoomBy(action)
     }
 
-    globalThis.addEventListener('keydown', handleKeyDown)
-    return () => globalThis.removeEventListener('keydown', handleKeyDown)
+    // Arrow keys pan. Key repeat is ALLOWED here (panKeyAction passes it
+    // through on purpose): holding an arrow keeps the view moving.
+    const handlePanKeyDown = (event: KeyboardEvent) => {
+      const direction = panKeyAction({
+        key: event.key,
+        repeat: event.repeat,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        targetIsEditable: targetIsEditable(event.target),
+      })
+      if (direction === null) return
+
+      event.preventDefault()
+      panBy(direction)
+    }
+
+    // passive: false because a wheel step we act on must also be prevented
+    // from scrolling the page. A step we ignore (Ctrl/Alt/Cmd, a sub-1
+    // delta, or one inside the 300ms window) is never prevented.
+    const handleWheel = (event: WheelEvent) => {
+      const step = wheelZoomAction(event, Date.now(), lastWheelStepMsRef.current)
+      if (step === null) return
+
+      event.preventDefault()
+      lastWheelStepMsRef.current = step.stepAtMs
+      zoomBy(step.action)
+    }
+
+    globalThis.addEventListener('keydown', handleZoomKeyDown)
+    globalThis.addEventListener('keydown', handlePanKeyDown)
+    globalThis.addEventListener('wheel', handleWheel, { passive: false })
+
+    return () => {
+      globalThis.removeEventListener('keydown', handleZoomKeyDown)
+      globalThis.removeEventListener('keydown', handlePanKeyDown)
+      globalThis.removeEventListener('wheel', handleWheel)
+    }
   }, [])
 
   // VIS-6/VIS-7 tune mode: the overlay text (never drawn on the canvas)
@@ -200,9 +309,16 @@ export default function WakeCanvas() {
     if (!TUNE_MODE) return
 
     const update = () => {
+      const view = viewRef.current
       const status = {
         basemapAvailable: BASEMAP_AREA !== undefined,
-        radiusNm: radiusNmRef.current,
+        radiusNm: view.radiusNm,
+        // Where the view sits relative to the area centre, in nm: 1 nm is
+        // one arc minute, and longitude is scaled the same way mapProject
+        // scales it, at the AREA centre's latitude.
+        centerOffsetLatNm: (view.centerLat - AREA_CENTRE_LAT) * 60,
+        centerOffsetLonNm:
+          (view.centerLon - AREA_CENTRE_LON) * 60 * Math.cos((AREA_CENTRE_LAT * Math.PI) / 180),
         vesselCount: vesselCountRef.current,
         fps: fpsRef.current,
       }
@@ -234,12 +350,13 @@ export default function WakeCanvas() {
     // exactly as it did before this story.
     const mapContainer = mapContainerRef.current
     if (BASEMAP_AREA !== undefined && mapContainer !== null && basemapRef.current === null) {
+      const view = viewRef.current
       basemapRef.current = mountBasemap({
         container: mapContainer,
         area: BASEMAP_AREA,
-        centerLat: VIEW.centerLat,
-        centerLon: VIEW.centerLon,
-        radiusNm: radiusNmRef.current,
+        centerLat: view.centerLat,
+        centerLon: view.centerLon,
+        radiusNm: view.radiusNm,
         landLevel: configRef.current.basemapLand,
         projConfig: PROJ_CONFIG,
         canvasWidth: globalThis.innerWidth,
@@ -314,6 +431,10 @@ export default function WakeCanvas() {
       const deltaMs = nowMs - lastFrameMs
       lastFrameMs = nowMs
 
+      // The live view, read fresh EVERY frame: a pan or a zoom mutates
+      // viewRef only, and the next frame draws the new centre immediately.
+      const view = viewRef.current
+
       // VIS-9: town names go UNDER everything renderFrame draws -- they
       // are the bottom of the drawn stack, immediately above the
       // basemap. renderFrame itself is called with exactly the arguments
@@ -322,9 +443,9 @@ export default function WakeCanvas() {
         drawPlaceNames(
           ctx,
           BASEMAP_AREA.places,
-          VIEW.centerLat,
-          VIEW.centerLon,
-          radiusNmRef.current,
+          view.centerLat,
+          view.centerLon,
+          view.radiusNm,
           PROJ_CONFIG,
           canvas.width,
           canvas.height,
@@ -332,9 +453,9 @@ export default function WakeCanvas() {
       }
 
       renderFrame(trackedRef.current, vesselStateRef.current, ctx, {
-        centerLat: AREA.centerLat,
-        centerLon: AREA.centerLon,
-        radiusNm: radiusNmRef.current,
+        centerLat: view.centerLat,
+        centerLon: view.centerLon,
+        radiusNm: view.radiusNm,
         projConfig: PROJ_CONFIG,
         canvasWidth: canvas.width,
         canvasHeight: canvas.height,

@@ -3,6 +3,7 @@ import {
   FPS_WINDOW_MS,
   applyTuneKey,
   formatFps,
+  formatView,
   tuneOverlayText,
   type TuneKeyEvent,
 } from './tuneOverlay'
@@ -167,7 +168,7 @@ assert(formatFps(60) === '60' && formatFps(31) === '31', 'formatFps passes a rea
 
 // The same distinction, in the string the ceiling actually reads.
 {
-  const status = { basemapAvailable: true, radiusNm: 20, vesselCount: 51, fps: null as number | null }
+  const status = { basemapAvailable: true, radiusNm: 20, centerOffsetLatNm: 0, centerOffsetLonNm: 0, vesselCount: 51, fps: null as number | null }
   const pending = tuneOverlayText(DEFAULT_CONFIG, status)
   const zero = tuneOverlayText(DEFAULT_CONFIG, { ...status, fps: 0 })
   const sixty = tuneOverlayText(DEFAULT_CONFIG, { ...status, fps: 60 })
@@ -181,7 +182,7 @@ assert(formatFps(60) === '60' && formatFps(31) === '31', 'formatFps passes a rea
     'the pending overlay contains no "FPS 0" anywhere -- which is exactly what the VIS-9 look misread',
   )
   assert(pending.includes('Vessels 51'), 'the vessel count is shown even while FPS has no sample yet (the combination the look reported)')
-  assert(pending.includes('Radius 20nm'), 'the current radius is included in the tune status line')
+  assert(pending.includes('View 20nm N+0.0 E+0.0'), 'the tune status line shows the view: the current radius and the centre offset (at the area centre on a fresh load)')
 }
 
 // --- the sampling window ---
@@ -198,7 +199,7 @@ assert(
 // --- the overlay text reflects the settings it claims to ---
 
 {
-  const status = { basemapAvailable: true, radiusNm: 20, vesselCount: 7, fps: 42 }
+  const status = { basemapAvailable: true, radiusNm: 20, centerOffsetLatNm: 0, centerOffsetLonNm: 0, vesselCount: 7, fps: 42 }
   const text = tuneOverlayText(DEFAULT_CONFIG, status)
   assert(text.includes(`Land ${LAND_LEVELS[DEFAULT_CONFIG.basemapLand].name}`), `the overlay names the default land level (${LAND_LEVELS[DEFAULT_CONFIG.basemapLand].name})`)
   assert(text.includes('Basemap on'), 'basemap available and enabled reads "Basemap on"')
@@ -228,6 +229,51 @@ assert(
   LAND_LEVELS[DEFAULT_CONFIG.basemapLand].name === 'low',
   `land level 0 is the one named 'low' (it is '${LAND_LEVELS[DEFAULT_CONFIG.basemapLand].name}')`,
 )
+
+// --- the view readout: radius AND where the centre has been panned to ---
+//
+// The old line opened with a bare "Radius 20nm" and said nothing about
+// where the view was looking. Panning makes the centre a live value, so the
+// readout now carries it: "View <radius>nm N<lat> E<lon>", both offsets in
+// nautical miles from the area's own centre, signed on both axes.
+
+assert(formatView(20, 0, 0) === 'View 20nm N+0.0 E+0.0', `formatView at the area centre (got ${formatView(20, 0, 0)})`)
+assert(
+  formatView(5, 1.2, -0.4) === 'View 5nm N+1.2 E-0.4',
+  `formatView matches the requested example exactly (got ${formatView(5, 1.2, -0.4)})`,
+)
+assert(
+  formatView(2, -0.04, 0.04) === 'View 2nm N+0.0 E+0.0',
+  `a pan under half a tenth prints as +0.0, never -0.0 (got ${formatView(2, -0.04, 0.04)})`,
+)
+assert(
+  formatView(10, -3.24, 2.56) === 'View 10nm N-3.2 E+2.6',
+  `formatView rounds to one decimal (got ${formatView(10, -3.24, 2.56)})`,
+)
+assert(
+  formatView(1, 0.17, -0.17) === 'View 1nm N+0.2 E-0.2',
+  `the sign follows the ROUNDED offset: a negative east offset that rounds away from zero still prints the minus (got ${formatView(1, 0.17, -0.17)})`,
+)
+
+{
+  const panned = tuneOverlayText(DEFAULT_CONFIG, {
+    basemapAvailable: true,
+    radiusNm: 5,
+    centerOffsetLatNm: 1.2,
+    centerOffsetLonNm: -0.4,
+    vesselCount: 3,
+    fps: 60,
+  })
+  assert(
+    panned.startsWith('View 5nm N+1.2 E-0.4'),
+    `the overlay line leads with the view, so a zoomed and panned view is the first thing read at the ceiling (got ...${panned.slice(0, 30)})`,
+  )
+  assert(
+    !panned.includes('Radius'),
+    'the old bare "Radius Nnm" segment is gone -- the radius now lives inside the view readout',
+  )
+  assert(panned.includes('Vessels 3'), 'the rest of the status line still follows the view segment')
+}
 
 const total = passed + failed
 if (failed === 0) {
