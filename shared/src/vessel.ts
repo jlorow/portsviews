@@ -12,6 +12,7 @@ export interface VesselGlyphSpec {
   baseSize: number      // reference size in pixels at 1920px canvas width
   color: string         // hex color
   isNotable: boolean    // notable vessels use accent color #7EC8C8
+  rotateUnknown?: boolean
 }
 
 export const VESSEL_COLORS: Record<VesselType, string> = {
@@ -25,6 +26,8 @@ export const VESSEL_COLORS: Record<VesselType, string> = {
 }
 
 export const NOTABLE_COLOR = '#7EC8C8'
+
+export const STOPPED_COLOR = '#CCFF00'
 
 // The one dark value used to separate a drawn thing from whatever is
 // behind it: VIS-8's hero-label shadow, and its outline on stopped-vessel

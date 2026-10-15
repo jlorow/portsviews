@@ -6,6 +6,7 @@ import {
   tierFor,
   typedHalfWidthRatio,
   TIER_MIN_PX_BY_TYPE,
+  mixedGlyphColors,
 } from './glyphShapes'
 import { Path2DShim } from './path2dShim'
 
@@ -93,7 +94,7 @@ function specFor(type: VesselType, overrides?: Partial<VesselGlyphSpec>): Vessel
   return {
     type,
     baseSize: 28,
-    color: '#C8D8F0',
+    color: '',
     isNotable: false,
     ...overrides,
   }
@@ -110,6 +111,29 @@ function assert(condition: boolean, label: string): void {
     failed++
     console.log(`[FAIL] ${label}`)
   }
+}
+
+// A non-empty spec color overrides the vessel palette, and the mixed detail
+// tones are derived from that same color.
+{
+  const color = '#CCFF00'
+  const tones = mixedGlyphColors(color)
+  const ctx = createMockCtx()
+  drawGlyph(ctx, 960, 540, 0, specFor('cargo', { color }), 1920)
+  assert(ctx._fills.some((fill) => fill.style === color), 'explicit glyph color fills the hull')
+  assert(ctx._fills.some((fill) => fill.style === tones.dark), 'dark hull detail derives from the explicit glyph color')
+  assert(ctx._fills.some((fill) => fill.style === tones.light), 'light hull detail derives from the explicit glyph color')
+}
+
+// Unknown silhouettes retain their unrotated default but can opt into
+// rotation when a stopped vessel has a trustworthy reported heading.
+{
+  const ctx = createMockCtx()
+  drawGlyph(ctx, 960, 540, 137.5, specFor('unknown', { rotateUnknown: true }), 1920)
+  assert(
+    ctx._calls.includes(`rotate(${(137.5 * Math.PI) / 180})`),
+    'unknown silhouette rotates when rotateUnknown is true',
+  )
 }
 
 // Test 1: drawGlyph does not throw for each of the 7 vessel types

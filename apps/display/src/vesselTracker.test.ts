@@ -1,6 +1,6 @@
 import './canvas/path2dShim'
 import type { VesselFix, VesselState, VesselType, TrackPoint, DisplayConfig } from '@wake/shared'
-import { DEFAULT_CONFIG, GLYPH_SCALES, LABEL_SIZES, UNKNOWN_SCALES, SWEEP_PERIODS, nextGlyphScale } from '@wake/shared'
+import { DEFAULT_CONFIG, GLYPH_SCALES, LABEL_SIZES, UNKNOWN_SCALES, SWEEP_PERIODS, nextGlyphScale, screenHeadingDeg, STOPPED_COLOR, VESSEL_COLORS } from '@wake/shared'
 import type { ClientVesselEntry } from './wakeSocket'
 import {
   createTrackedVesselMap,
@@ -183,8 +183,8 @@ function createMockCtx() {
   }
 }
 
-function fix(mmsi: string, lat: number, lon: number, timestamp: number, sogKn = 0, cogDeg = 0): VesselFix {
-  return { mmsi, lat, lon, cogDeg, sogKn, timestamp }
+function fix(mmsi: string, lat: number, lon: number, timestamp: number, sogKn = 0, cogDeg = 0, headingDeg?: number): VesselFix {
+  return { mmsi, lat, lon, cogDeg, sogKn, ...(headingDeg === undefined ? {} : { headingDeg }), timestamp }
 }
 
 // VIS-8: a typed vessel below STOPPED_MAX_SOG_KN (0.5kn) now draws a dot
@@ -302,7 +302,9 @@ function baseRenderContext(overrides?: Partial<RenderContext>): RenderContext {
   const clientState = new Map<string, ClientVesselEntry>()
   const ctxUnknown = createMockCtx()
 
-  onFixArrived(tracked, fix('444444444', IN_VIEW_LAT, IN_VIEW_LON, 1000))
+  // This fixture tests the unknown silhouette; keep it moving because
+  // stopped unknowns now use the stopped-color fallback dot.
+  onFixArrived(tracked, fix('444444444', IN_VIEW_LAT, IN_VIEW_LON, 1000, 15))
   // clientState has no entry at all for 444444444 -- no static resolution ever seen.
   // rangeRingsEnabled off -- see the out-of-view scenario's comment.
   renderFrame(tracked, clientState, ctxUnknown, baseRenderContext({ nowMs: 1000, config: { ...DEFAULT_CONFIG, legendEnabled: false, rangeRingsEnabled: false, sweepPeriodSec: 0 } }))
@@ -822,7 +824,9 @@ function parseArcCalls(calls: string[]): { x: number; y: number; r: number }[] {
 {
   const tracked = createTrackedVesselMap()
   const clientState = new Map<string, ClientVesselEntry>()
-  onFixArrived(tracked, fix('UNKN00001', IN_VIEW_LAT, IN_VIEW_LON, 1000))
+  // The assertion is about unknownScale silhouette geometry, so use a
+  // moving fixture rather than the stopped fallback dot.
+  onFixArrived(tracked, fix('UNKN00001', IN_VIEW_LAT, IN_VIEW_LON, 1000, 15))
   const ctx = createMockCtx()
   renderFrame(tracked, clientState, ctx, baseRenderContext({
     nowMs: 1000,
@@ -1114,7 +1118,7 @@ function buildLongTrack(mmsi: string): { state: VesselState; nowMs: number } {
   )
 }
 
-// ===================== VIS-8: stopped vessels draw as a dot ==============
+// ===================== VIS-8: stopped vessels use heading hulls ==========
 // "Stopped" is lastFix.sogKn < 0.5, NOT trails.ts's totalDistanceNm < 0.1.
 // VIS-8's A1(c) audit measured the latter against the recorded 31-minute
 // Dover capture: it called 62 of 787 fixes at sogKn >= 3.0 "stopped", 57 of
@@ -1128,12 +1132,13 @@ function drawOneTypedVessel(
   vesselType: VesselType,
   sogKn: number,
   configOverrides?: Partial<DisplayConfig>,
+  headingDeg?: number,
 ) {
   const tracked = createTrackedVesselMap()
   const clientState = new Map<string, ClientVesselEntry>()
   const mmsi = 'DOT000001'
   clientState.set(mmsi, { vesselType })
-  onFixArrived(tracked, fix(mmsi, IN_VIEW_LAT, IN_VIEW_LON, 1000, sogKn))
+  onFixArrived(tracked, fix(mmsi, IN_VIEW_LAT, IN_VIEW_LON, 1000, sogKn, 0, headingDeg))
 
   const ctx = createMockCtx()
   renderFrame(tracked, clientState, ctx, baseRenderContext({
@@ -1161,8 +1166,101 @@ function arcRadius(calls: string[]): number | null {
   return Number(call.slice('arc('.length, -1).split(',')[2])
 }
 
-// Scenario: a stopped typed vessel draws a dot, at the confirmed radius,
-// in its own type colour -- not a rotated hull.
+function expectedScreenHeading(headingDeg: number): number {
+  return screenHeadingDeg(
+    IN_VIEW_LAT,
+    IN_VIEW_LON,
+    headingDeg,
+    IN_VIEW_LAT,
+    IN_VIEW_LON,
+    20,
+    { mirrorX: false, rotationDeg: 0 },
+    1920,
+    1080,
+  )
+}
+
+// Scenario: stopped typed vessels with a reported true heading retain their
+// hull geometry, use the shared stopped colour, and rotate to that heading.
+{
+  const ctx = drawOneTypedVessel('cargo', 0.3, undefined, 217)
+  const expected = expectedScreenHeading(217)
+  assert(ctx._pathFillCount() >= 3, 'stopped-heading: typed vessel fills its hull and details')
+  assert(ctx._fills().some((fill) => fill.fillStyle === STOPPED_COLOR), 'stopped-heading: typed hull uses STOPPED_COLOR')
+  assert(ctx._calls.includes(`rotate(${(expected * Math.PI) / 180})`), `stopped-heading: rotates to screenHeadingDeg ${expected}`)
+  assert(ctx._arcCount() === 0, 'stopped-heading: no fallback dot when heading is available')
+}
+
+// Scenario: stopped typed vessels without a reported heading use one filled
+// fallback arc in the stopped colour and no hull path.
+{
+  const ctx = drawOneTypedVessel('cargo', 0.3)
+  assert(ctx._arcCount() === 1, `stopped-no-heading: one fallback arc (got ${ctx._arcCount()})`)
+  assert(ctx._bezierCount() === 0, 'stopped-no-heading: no hull bezier')
+  assert(ctx._fills().length === 1 && ctx._fills()[0]?.fillStyle === STOPPED_COLOR, 'stopped-no-heading: one fill in STOPPED_COLOR')
+  assert(ctx._pathFillCount() === 0, 'stopped-no-heading: no typed hull path fills')
+}
+
+// Scenario: a stopped unknown with a valid heading uses the unknown
+// silhouette, stopped colour, and heading rotation.
+{
+  const ctx = drawOneUnknownVessel(0.3, 15, 217)
+  const expected = expectedScreenHeading(217)
+  assert(ctx._arcCount() === 0 && ctx._bezierCount() > 0, 'unknown-stopped-heading: draws the unknown silhouette')
+  assert(ctx._fills().some((fill) => fill.fillStyle === STOPPED_COLOR), 'unknown-stopped-heading: silhouette uses STOPPED_COLOR')
+  assert(ctx._calls.includes(`rotate(${(expected * Math.PI) / 180})`), `unknown-stopped-heading: rotates to screenHeadingDeg ${expected}`)
+}
+
+// Scenario: an unknown without a heading uses a stopped-color fallback dot;
+// the exact threshold remains moving and the value just below it is stopped.
+{
+  const atZero = drawOneUnknownVessel(0, 0)
+  assert(atZero._arcCount() === 1 && atZero._bezierCount() === 0, 'unknown-stopped-dot: 0kn draws one dot arc and no silhouette')
+  assert(atZero._fills().length === 1 && atZero._fills()[0]?.fillStyle === STOPPED_COLOR, 'unknown-stopped-dot: dot is STOPPED_COLOR')
+
+  const atThreshold = drawOneUnknownVessel(0.5, 0)
+  assert(atThreshold._arcCount() === 0 && atThreshold._bezierCount() > 0, 'unknown-threshold: exactly 0.5kn draws the silhouette')
+  const justBelow = drawOneUnknownVessel(0.49999, 0)
+  assert(justBelow._arcCount() === 1 && justBelow._bezierCount() === 0, 'unknown-threshold: 0.49999kn draws a fallback dot')
+}
+
+// Scenario: stopped glyphs are drawn before moving glyphs, regardless of
+// the vessels' relative type-size stack order.
+{
+  const tracked = createTrackedVesselMap()
+  const clientState = new Map<string, ClientVesselEntry>([
+    ['STOPPEDFERRY', { vesselType: 'ferry' }],
+    ['MOVINGCARGO', { vesselType: 'cargo' }],
+  ])
+  onFixArrived(tracked, fix('STOPPEDFERRY', IN_VIEW_LAT, IN_VIEW_LON, 1000, 0))
+  onFixArrived(tracked, fix('MOVINGCARGO', IN_VIEW_LAT, IN_VIEW_LON, 1000, 12))
+  const ctx = createMockCtx()
+  renderFrame(tracked, clientState, ctx, baseRenderContext({
+    nowMs: 1000,
+    config: { ...DEFAULT_CONFIG, heroesEnabled: false, legendEnabled: false, rangeRingsEnabled: false, sweepPeriodSec: 0 },
+  }))
+  const fills = ctx._fills()
+  assert(fills[0]?.fillStyle === STOPPED_COLOR, 'draw-order: stopped vessel fills precede moving vessel fills')
+  assert(fills.some((fill) => fill.fillStyle === VESSEL_COLORS.cargo), 'draw-order: moving cargo still uses its type colour')
+}
+
+// Scenario: a retained hero slowed below 0.5kn remains a type-colour hull,
+// not a stopped-style vessel.
+{
+  const tracked = createTrackedVesselMap()
+  const clientState = new Map<string, ClientVesselEntry>([['HEROLOW', { vesselType: 'cargo' }]])
+  onFixArrived(tracked, fix('HEROLOW', IN_VIEW_LAT, IN_VIEW_LON, 1000, 0.5))
+  const config: DisplayConfig = { ...DEFAULT_CONFIG, legendEnabled: false, rangeRingsEnabled: false, sweepPeriodSec: 0 }
+  renderFrame(tracked, clientState, createMockCtx(), baseRenderContext({ nowMs: 1000, config }))
+  onFixArrived(tracked, fix('HEROLOW', IN_VIEW_LAT, IN_VIEW_LON, 1001, 0.3, 0, 217))
+  const ctx = createMockCtx()
+  renderFrame(tracked, clientState, ctx, baseRenderContext({ nowMs: 1001, config }))
+  assert(ctx._fills().some((fill) => fill.fillStyle === VESSEL_COLORS.cargo), 'hero-slow: retained hero keeps its type-colour hull')
+  assert(ctx._fills().every((fill) => fill.fillStyle !== STOPPED_COLOR), 'hero-slow: retained hero is not drawn in STOPPED_COLOR')
+}
+
+// Scenario: a stopped typed vessel without a reported heading draws the
+// fallback dot at its confirmed radius in the shared stopped colour.
 {
   const ctx = drawOneTypedVessel('cargo', 0.3)
 
@@ -1178,8 +1276,8 @@ function arcRadius(calls: string[]): number | null {
     `dot: stopped cargo is never rotated (calls: ${JSON.stringify(ctx._calls.filter((c) => c.startsWith('rotate(')))})`,
   )
   assert(
-    JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: '#0AA0FF', globalAlpha: 1 }]),
-    `dot: exactly one fill, in cargo's own P2 colour #0AA0FF at alpha 1 (got ${JSON.stringify(ctx._fills())})`,
+    JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: STOPPED_COLOR, globalAlpha: 1 }]),
+    `dot: exactly one fill, in STOPPED_COLOR ${STOPPED_COLOR} at alpha 1 (got ${JSON.stringify(ctx._fills())})`,
   )
 }
 
@@ -1209,20 +1307,19 @@ function arcRadius(calls: string[]): number | null {
   const expected = Math.max(1.1 * (110 * 0.75 * typedHalfWidthRatio('tanker')), STOPPED_DOT_MIN_RADIUS_PX * (1920 / 1920));
   assert(r !== null && Math.abs(r - expected) < 1e-9, `dot-sentinel: sentinel-zeroed tanker draws a dot of radius ${expected.toFixed(6)} (got ${r})`)
   assert(
-    JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: '#FF7A1A', globalAlpha: 1 }]),
-    `dot-sentinel: drawn in tanker's own colour #FF7A1A (got ${JSON.stringify(ctx._fills())})`,
+    JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: STOPPED_COLOR, globalAlpha: 1 }]),
+    `dot-sentinel: drawn in STOPPED_COLOR ${STOPPED_COLOR} (got ${JSON.stringify(ctx._fills())})`,
   )
 }
 
-// Scenario: an unknown-type stopped vessel is untouched -- its recorded
-// draw calls are identical with the dot rule on and off, so it keeps its
-// unknownScale term rather than being re-routed through drawDot.
+// Scenario: a MOVING unknown vessel stays a silhouette regardless of
+// stoppedAsDot; stopped unknowns now use the fallback dot instead.
 {
-  const on = drawOneTypedVessel('unknown', 0, { stoppedAsDot: true })
-  const off = drawOneTypedVessel('unknown', 0, { stoppedAsDot: false })
+  const on = drawOneTypedVessel('unknown', 15, { stoppedAsDot: true })
+  const off = drawOneTypedVessel('unknown', 15, { stoppedAsDot: false })
   assert(
     JSON.stringify(on._calls) === JSON.stringify(off._calls),
-    `dot-unknown: unknown-type stopped vessel's draw calls unchanged by stoppedAsDot (on=${JSON.stringify(on._calls)}, off=${JSON.stringify(off._calls)})`,
+    `dot-unknown: moving unknown vessel's silhouette calls are unchanged by stoppedAsDot (on=${JSON.stringify(on._calls)}, off=${JSON.stringify(off._calls)})`,
   )
   // 80 * 0.75 * 0.6 (unknownScale) * 0.28 = 10.08. A7 made this a
   // silhouette rather than a circle; A9 redistributed it at 1:2.67, so the
@@ -1307,13 +1404,12 @@ function arcRadius(calls: string[]): number | null {
     assert(r !== null && Math.abs(r - expected) < 1e-9, `min-radius: naval at glyphScale 0.3 draws ${expected.toFixed(6)} (got ${r})`);
   }
   
-  // The unknown silhouette footprint is unchanged: its half-length is still
-  // 16.46057107150296 at the default unknownScale 0.6. Routing it through
-  // drawDot never happened (it keeps its own circle-ratio formula), so this
-  // scenario passes with the dot rule on and off identically.
+  // The moving unknown silhouette footprint is unchanged: its half-length
+  // is still 16.46057107150296 at unknownScale 0.6. A moving fixture keeps
+  // this geometry assertion separate from stopped fallback-dot behavior.
 {
-  const on = drawOneTypedVessel('unknown', 0, { stoppedAsDot: true })
-  const off = drawOneTypedVessel('unknown', 0, { stoppedAsDot: false })
+  const on = drawOneTypedVessel('unknown', 15, { stoppedAsDot: true })
+  const off = drawOneTypedVessel('unknown', 15, { stoppedAsDot: false })
   assert(
     JSON.stringify(on._calls) === JSON.stringify(off._calls),
     'unknown-silhouette: draw calls unchanged by the dot rule',
@@ -1739,11 +1835,11 @@ function legendTexts(ctx: ReturnType<typeof createMockCtx>): string[] {
 
 // One unknown-type vessel at a given speed and course, through the real
 // render path.
-function drawOneUnknownVessel(sogKn: number, cogDeg: number) {
+function drawOneUnknownVessel(sogKn: number, cogDeg: number, headingDeg?: number) {
   const tracked = createTrackedVesselMap()
   const clientState = new Map<string, ClientVesselEntry>()
   // No clientState entry at all -> vesselType resolves to 'unknown'.
-  onFixArrived(tracked, fix('UNKA70001', IN_VIEW_LAT, IN_VIEW_LON, 1000, sogKn, cogDeg))
+  onFixArrived(tracked, fix('UNKA70001', IN_VIEW_LAT, IN_VIEW_LON, 1000, sogKn, cogDeg, headingDeg))
 
   const ctx = createMockCtx()
   renderFrame(tracked, clientState, ctx, baseRenderContext({
@@ -1759,20 +1855,19 @@ function drawOneUnknownVessel(sogKn: number, cogDeg: number) {
   return ctx
 }
 
-// Scenario: stopped and under way draw the identical shape. Both fixes sit
-// at the view centre, so the recorded translate is identical too and the
-// whole call sequence can be compared directly.
+// Scenario: two moving speeds draw the identical unknown silhouette. Both
+// fixes sit at the view centre, so the recorded translate is identical too.
 {
-  const stopped = drawOneUnknownVessel(0, 0)
+  const atThreshold = drawOneUnknownVessel(0.5, 0)
   const moving = drawOneUnknownVessel(15, 90)
 
   assert(
-    JSON.stringify(stopped._calls) === JSON.stringify(moving._calls),
-    `a7-speed: an unknown vessel at 0kn and at 15kn draw an identical call sequence (stopped=${JSON.stringify(stopped._calls)}, moving=${JSON.stringify(moving._calls)})`,
+    JSON.stringify(atThreshold._calls) === JSON.stringify(moving._calls),
+    `a7-speed: moving unknowns at 0.5kn and 15kn draw an identical call sequence (at-threshold=${JSON.stringify(atThreshold._calls)}, moving=${JSON.stringify(moving._calls)})`,
   )
   assert(
-    stopped._calls.every((c) => !c.startsWith('rotate(')),
-    `a7-speed: no rotate() call at either speed (got ${JSON.stringify(stopped._calls.filter((c) => c.startsWith('rotate(')))})`,
+    atThreshold._calls.every((c) => !c.startsWith('rotate(')),
+    `a7-speed: no rotate() call at either moving speed (got ${JSON.stringify(atThreshold._calls.filter((c) => c.startsWith('rotate(')))})`,
   )
 }
 
@@ -1806,7 +1901,9 @@ function drawOneUnknownVessel(sogKn: number, cogDeg: number) {
 // box is not on its own proof the curve stays inside, and the point of
 // this scenario is the shape that is actually drawn.
 {
-  const calls = drawOneUnknownVessel(0, 0)._calls
+  // Geometry assertions must exercise the moving silhouette, not the new
+  // stopped fallback dot.
+  const calls = drawOneUnknownVessel(15, 0)._calls
 
   function cubicAt(p0: number, p1: number, p2: number, p3: number, t: number): number {
     const u = 1 - t
@@ -1911,8 +2008,8 @@ function drawOneUnknownVessel(sogKn: number, cogDeg: number) {
     `dot: stopped cargo is never rotated (calls: ${JSON.stringify(ctx._calls.filter((c) => c.startsWith('rotate(')))})`,
   )
   assert(
-    JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: '#0AA0FF', globalAlpha: 1 }]),
-    `dot: exactly one fill, in cargo's own P2 colour #0AA0FF at alpha 1 (got ${JSON.stringify(ctx._fills())})`,
+    JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: STOPPED_COLOR, globalAlpha: 1 }]),
+    `dot: exactly one fill, in STOPPED_COLOR ${STOPPED_COLOR} at alpha 1 (got ${JSON.stringify(ctx._fills())})`,
   )
 }
 
@@ -1945,14 +2042,16 @@ function drawOneUnknownVessel(sogKn: number, cogDeg: number) {
   )
   // The fill itself is untouched: still the vessel's own colour, opaque.
   assert(
-    JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: '#0AA0FF', globalAlpha: 1 }]),
-    `a11-dot: the fill is unchanged -- cargo's own colour at alpha 1 (got ${JSON.stringify(ctx._fills())})`,
+    JSON.stringify(ctx._fills()) === JSON.stringify([{ fillStyle: STOPPED_COLOR, globalAlpha: 1 }]),
+    `a11-dot: fallback dot fill uses STOPPED_COLOR at alpha 1 (got ${JSON.stringify(ctx._fills())})`,
   )
 }
 
 // Scenario: the unknown silhouette gets the same treatment.
 {
-  const ctx = drawOneUnknownVessel(0, 0)
+  // Keep this outline assertion on the moving silhouette; stopped unknowns
+  // now use the fallback dot instead.
+  const ctx = drawOneUnknownVessel(15, 0)
   const strokes = ctx._strokes()
   assert(strokes.length === 1, `a11-unknown: exactly one stroke on the silhouette (got ${strokes.length})`)
   assert(

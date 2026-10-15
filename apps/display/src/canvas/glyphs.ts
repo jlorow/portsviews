@@ -21,18 +21,12 @@ export function glyphActualSize(baseSize: number, canvasWidth: number): number {
   return baseSize * (canvasWidth / 1920)
 }
 
-// The circle-era radius ratio kept untouched on purpose: drawUnknown still
-// reads it for its silhouette, and a stopped typed vessel now derives its
-// radius from the hull beam, not from this constant. One constant, three
-// users (dot, unknown silhouette, unknown-scale circle) -- not two copies
-// of a formula that answer to different inputs.
+// The circle-era radius ratio remains for the unknown silhouette and its
+// stopped fallback dot; typed fallback dots derive their radius from hull
+// beam instead.
 export const STOPPED_DOT_MIN_RADIUS_PX = 6
 
-// The circle-era radius ratio kept untouched on purpose: drawUnknown still
-// reads it for its silhouette, and a stopped typed vessel now derives its
-// radius from the hull beam, not from this constant. One constant, three
-// users (dot, unknown silhouette, unknown-scale circle) -- not two copies
-// of a formula that answer to different inputs.
+// Kept at 0.28 for the unknown silhouette and its stopped fallback dot.
 export const GLYPH_DOT_RADIUS_RATIO = 0.28
 
 // VIS-9: the smallest a stopped-typed dot may be drawn at, in px at the
@@ -59,24 +53,8 @@ const UNKNOWN_STERN_WIDTH = 0.88
 // VIS-8 A11: a dark edge on the two shapes that are drawn opaque and
 // routinely land on top of each other.
 //
-// At real density stopped vessels of different types sit within a pixel
-// or two of each other -- 31 such pairs in the recorded 31-minute Dover
-// capture alone -- and because the non-hero draw loop orders by
-// VESSEL_BASE_SIZES descending, the SMALLER type is drawn last, on top.
-// Its opaque fill then covers most of the larger one, leaving only a thin
-// concentric ring of the first colour: a ferry over a naval leaves 2.10px
-// all round and hides 81% of it. That ring is what the human's look saw,
-// and with no edge between the two fills it reads as one blob with a halo
-// rather than as two vessels.
-//
-// This does not fix the overlap -- VIS-4 already established that
-// clustering survives every glyph size -- it only puts a boundary between
-// the two fills so the eye can separate them.
-//
-// Not the reverted "stroke outline on glyphs" correction: that stroked
-// hull INTERNAL detail in the same colour as its own fill, which by
-// definition produced no edge contrast. This is a contrasting colour, on
-// the outer silhouette, and only on shapes that are drawn flat.
+// A dark outer edge separates opaque overlapping glyphs, regardless of
+// whether their fill comes from the type palette or STOPPED_COLOR.
 const OUTLINE_WIDTH = 1
 
 function strokeOutline(ctx: CanvasRenderingContext2D, canvasWidth: number): void {
@@ -97,10 +75,8 @@ const UNKNOWN_ASPECT = Math.sqrt(UNKNOWN_BEAM_TO_LENGTH)
 // have translated to the vessel's centre and set fillStyle already -- the
 // same contract hullPath and the drawCargo family already work under.
 function dotPath(ctx: CanvasRenderingContext2D, radius: number): void {
-  // Nothing draws a circle at GLYPH_DOT_RADIUS_RATIO anymore: the stopped
-  // typed dot now gets its radius straight from STOPPED_DOT_MIN_RADIUS_PX
-  // and 1.1 x hullHalfWidth. GLYPH_DOT_RADIUS_RATIO is still 0.28 and is
-  // still read by drawUnknown.
+  // GLYPH_DOT_RADIUS_RATIO remains part of the unknown silhouette and
+  // fallback-dot sizing; typed fallback dots use their hull beam.
   ctx.beginPath()
   ctx.arc(0, 0, radius, 0, Math.PI * 2)
   ctx.closePath()
@@ -108,22 +84,13 @@ function dotPath(ctx: CanvasRenderingContext2D, radius: number): void {
 }
 
 /**
- * VIS-8: draw a vessel as a filled dot rather than a hull silhouette.
- *
- * A stopped vessel's reported COG is noise -- VIS-3 measured p95 116.8
- * degrees of jitter between consecutive fixes at 0kn against 6.0 degrees
- * above 5kn -- so its hull is rotated to a fresh random bearing on every
- * fix. Where several vessels share a berth that reads as a crumple of
- * hulls pointing every way. A circle is rotation-invariant, so it says
- * "here, heading unknown" instead: the same thing the unknown glyph has
- * always said, in the vessel's own type colour.
- *
- * Deliberately NOT a branch inside drawGlyph -- there is no rotation to
- * apply, so there would be a rotation argument to ignore.
+ * Draw a stopped vessel without a trustworthy heading as a filled dot.
+ * The supplied baseSize already includes glyphScale and, for unknown
+ * vessels, unknownScale.
  *
  * @param baseSize - reference size at 1920px canvas width, already
- *   scaled by glyphScale by the caller (never by unknownScale, which is
- *   an unknown-type-only setting).
+ *   scaled by glyphScale by the caller and by unknownScale for unknown
+ *   vessels.
  */
 export function drawDot(
   ctx: CanvasRenderingContext2D,
@@ -132,7 +99,7 @@ export function drawDot(
   baseSize: number,
   color: string,
   canvasWidth: number,
-  type: Exclude<VesselType, 'unknown'>,
+  type: VesselType,
 ): void {
   const actualSize = glyphActualSize(baseSize, canvasWidth)
 
@@ -140,14 +107,11 @@ export function drawDot(
   ctx.translate(x, y)
   ctx.fillStyle = color
   ctx.globalAlpha = 1.0
-  // A stopped typed vessel draws a disc whose radius is the wider of
-  // (1.1 x the hull's half-width) or the minimum beam proxy. The minimum
-  // is scaled with the canvas like the hull itself (STOPPED_DOT_MIN_RADIUS_PX
-  // x canvasWidth/1920), so a stopped dot is never drawn narrower than the
-  // beam it sits on. The circle ratio (GLYPH_DOT_RADIUS_RATIO) is untouched;
-  // drawOrder, alpha, colour and dark outline are exactly what this function
-  // drew before.
-  const hullHalfWidth = actualSize * typedHalfWidthRatio(type)
+  // Radius is the wider of 1.1 x the shape's half-width and the minimum
+  // proxy, with both scaled to the canvas width.
+  const hullHalfWidth = type === 'unknown'
+    ? actualSize * GLYPH_DOT_RADIUS_RATIO * UNKNOWN_ASPECT
+    : actualSize * typedHalfWidthRatio(type)
   const dotRadiusPx = Math.max(
     1.1 * hullHalfWidth,
     STOPPED_DOT_MIN_RADIUS_PX * (canvasWidth / 1920),
@@ -171,8 +135,8 @@ export function drawDot(
  *   ctx.rotate's own convention), already carried through mapProject's
  *   mirror and rotation -- NOT the raw AIS cogDeg. Callers project it
  *   with shared/src/projection.ts's screenHeadingDeg(); see Correction 18.
- *   IGNORED for the 'unknown' type, which never rotates -- see the
- *   rotation guard below and drawUnknown's own comment.
+ *   IGNORED for the 'unknown' type unless rotateUnknown is true -- see
+ *   the rotation guard below.
  * @param spec    - Vessel glyph specification
  * @param canvasWidth - Current canvas width (for size scaling)
  * @param shadow  - VIS-6 hero glow only. When set, applies
@@ -191,23 +155,13 @@ export function drawGlyph(
   shadow?: { blur: number; color: string },
 ): void {
   const actualSize = glyphActualSize(spec.baseSize, canvasWidth)
-  const color = spec.isNotable ? NOTABLE_COLOR : VESSEL_COLORS[spec.type]
+  const color = spec.color !== '' ? spec.color : spec.isNotable ? NOTABLE_COLOR : VESSEL_COLORS[spec.type]
 
   ctx.save()
   ctx.translate(x, y)
-  // VIS-8: unknown vessels never rotate, at any speed. Their heading data
-  // is the least trustworthy in the feed -- TrueHeading disagrees with
-  // COG by up to 151.6 degrees for this population against 15.3 degrees
-  // for typed vessels, and COG jitter between consecutive fixes reaches
-  // a p95 of 116.8 degrees at 0kn. VIS-2's ceiling read test rejected a
-  // directional shape for exactly this reason and kept an
-  // orientationless one at every speed.
-  // The rotate call is skipped outright rather than passed a fixed 0, so
-  // there is no rotation term in the emitted call sequence at all. This
-  // mattered less when the unknown glyph was a circle (rotationally
-  // symmetric, so the rotation was computed and silently discarded -- see
-  // CLAUDE.md's S1.6a note); with a silhouette it would be visible.
-  if (spec.type !== 'unknown') {
+  // Unknown silhouettes remain orientationless by default; stopped
+  // unknowns opt in because they use the ship's reported true heading.
+  if (spec.type !== 'unknown' || spec.rotateUnknown === true) {
     ctx.rotate((screenHeadingDeg * Math.PI) / 180)
   }
   ctx.fillStyle = color
@@ -296,10 +250,8 @@ function hullPath(
  * S1.3 to VIS-7. The circle read as unfinished at the ceiling; this keeps
  * everything the circle was chosen for and only changes how it looks.
  *
- * Fixed orientation at every speed -- drawGlyph skips its rotate for this
- * type, and nothing here reads a heading, a course or a speed. Gating the
- * shape on sogKn would reintroduce the stopped/moving distinction VIS-2
- * deliberately ruled out for unknown vessels.
+ * Moving unknown vessels keep this fixed orientation. Stopped unknowns
+ * may opt into rotation using their reported heading via drawGlyph.
  *
  * Half-width and half-length both derive from GLYPH_DOT_RADIUS_RATIO *
  * size, the circle's own radius expression, scaled apart by

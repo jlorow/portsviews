@@ -1,5 +1,5 @@
 import type { VesselFix, VesselState, VesselType, ProjectionConfig, DisplayConfig } from '@wake/shared'
-import { applyFix, updateVesselState, isExpired, vesselOpacity, mapProject, screenHeadingDeg, VESSEL_BASE_SIZES, VESSEL_COLORS } from '@wake/shared'
+import { applyFix, updateVesselState, isExpired, vesselOpacity, mapProject, screenHeadingDeg, VESSEL_BASE_SIZES, VESSEL_COLORS, STOPPED_COLOR } from '@wake/shared'
 import type { ClientVesselEntry } from './wakeSocket'
 import { drawGlyph, drawDot, glyphActualSize } from './canvas/glyphs'
 import { drawTrail } from './canvas/trails'
@@ -10,9 +10,10 @@ import { drawSweep, sweepAngleDeg, beamCrossed } from './canvas/sweep'
 import { drawHeroLabels, drawAreaTitle, type HeroLabelInput } from './canvas/labels'
 import { buildLegendRows, drawLegend } from './canvas/legend'
 
-// VIS-8: the speed at or above which a vessel draws its hull. Below it,
-// the vessel is "stopped" and draws a dot instead (drawDot's own comment
-// has the why). This is heroes.ts's HERO_MIN_SOG_KN itself, not a second
+// VIS-8: the speed at or above which a non-hero vessel draws its moving
+// glyph. Below it, the vessel is "stopped" and uses its reported heading
+// for a hull or a fallback dot (drawDot's comment has the sizing rule).
+// This is heroes.ts's HERO_MIN_SOG_KN itself, not a second
 // 0.5 literal, and that identity is the point: isEligible requires
 // sogKn >= HERO_MIN_SOG_KN and isStoppedForGlyph requires
 // sogKn < HERO_MIN_SOG_KN, so the two predicates partition the speed
@@ -100,6 +101,7 @@ interface FrameEntry {
   vesselType: VesselType
   opacity: number
   heading: number
+  stoppedHeading?: number
   projectedX: number
   projectedY: number
   revealed: boolean
@@ -231,6 +233,19 @@ export function renderFrame(
       render.canvasWidth,
       render.canvasHeight,
     )
+    const stoppedHeading = eased.lastFix.headingDeg === undefined
+      ? undefined
+      : screenHeadingDeg(
+        eased.displayLat,
+        eased.displayLon,
+        eased.lastFix.headingDeg,
+        render.centerLat,
+        render.centerLon,
+        render.radiusNm,
+        render.projConfig,
+        render.canvasWidth,
+        render.canvasHeight,
+      )
 
     // VIS-7: radar sweep reveal. Not sweepOn -> every vessel is always
     // revealed. Sweeping -> revealed once (persists after), either by
@@ -260,6 +275,7 @@ export function renderFrame(
       vesselType,
       opacity,
       heading,
+      stoppedHeading,
       projectedX: projected.x,
       projectedY: projected.y,
       revealed,
@@ -325,8 +341,13 @@ export function renderFrame(
     return a.mmsi < b.mmsi ? -1 : a.mmsi > b.mmsi ? 1 : 0
   })
 
-  for (const entry of byStackOrder) {
-    if (heroMmsis.has(entry.mmsi)) continue
+  const nonHeroEntries = byStackOrder.filter((entry) => !heroMmsis.has(entry.mmsi))
+  const isStopped = (entry: FrameEntry): boolean =>
+    render.config.stoppedAsDot && isStoppedForGlyph(entry.eased.lastFix.sogKn)
+  const stoppedEntries = nonHeroEntries.filter(isStopped)
+  const movingEntries = nonHeroEntries.filter((entry) => !isStopped(entry))
+
+  for (const entry of stoppedEntries) {
     // VIS-7: unknown-type circles additionally scale by unknownScale --
     // they currently outshine heroes at ceiling distance. No effect on
     // any typed vessel.
@@ -334,20 +355,13 @@ export function renderFrame(
     const baseSize =
       VESSEL_BASE_SIZES[entry.vesselType] * render.config.glyphScale * (isUnknown ? render.config.unknownScale : 1)
 
-    // VIS-8: a stopped TYPED vessel draws a dot rather than a hull
-    // rotated to a noise bearing. Unknown vessels are excluded because
-    // they already draw a circle at this same radius ratio -- routing
-    // them through drawDot would silently drop their unknownScale term
-    // and change a glyph VIS-7 already settled at the ceiling.
-    if (entry.vesselType !== 'unknown' && render.config.stoppedAsDot && isStoppedForGlyph(entry.eased.lastFix.sogKn)) {
-      // entry.vesselType is narrowed here to the six typed types, so it is
-      // assignable to drawDot's type param.
+    if (entry.stoppedHeading === undefined) {
       drawDot(
         ctx,
         entry.projectedX,
         entry.projectedY,
         baseSize,
-        VESSEL_COLORS[entry.vesselType],
+        STOPPED_COLOR,
         render.canvasWidth,
         entry.vesselType,
       )
@@ -358,11 +372,21 @@ export function renderFrame(
       ctx,
       entry.projectedX,
       entry.projectedY,
+      entry.stoppedHeading,
+      { type: entry.vesselType, baseSize, color: STOPPED_COLOR, isNotable: false, rotateUnknown: true },
+      render.canvasWidth,
+    )
+  }
+
+  for (const entry of movingEntries) {
+    const isUnknown = entry.vesselType === 'unknown'
+    const baseSize =
+      VESSEL_BASE_SIZES[entry.vesselType] * render.config.glyphScale * (isUnknown ? render.config.unknownScale : 1)
+    drawGlyph(
+      ctx,
+      entry.projectedX,
+      entry.projectedY,
       entry.heading,
-      // VIS-4: baseSize scaled by render.config.glyphScale. The stack
-      // order above deliberately still sorts by the unscaled
-      // VESSEL_BASE_SIZES -- a uniform scale factor can't change which
-      // type is relatively larger, so it's the same order either way.
       { type: entry.vesselType, baseSize, color: '', isNotable: false },
       render.canvasWidth,
     )
