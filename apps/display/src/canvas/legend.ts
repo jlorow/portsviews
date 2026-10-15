@@ -1,5 +1,5 @@
 import type { VesselType } from '@wake/shared'
-import { VESSEL_COLORS } from '@wake/shared'
+import { STOPPED_COLOR, VESSEL_COLORS } from '@wake/shared'
 import { estimateTextWidth, typeLabel } from './labels'
 
 // VIS-8: a faint bottom-right key to the palette. Ferry is purple and
@@ -64,8 +64,8 @@ export function buildLegendRows(counts: Partial<Record<VesselType, number>>): Le
 /**
  * Draws the legend bottom-right. Drawn last, after the area title
  * (caller's responsibility). legendEnabled is the caller's own gate --
- * this function always draws when called, and an empty row list draws
- * nothing.
+ * this function draws type rows and, when enabled, an optional stopped
+ * count row.
  *
  * Rows read top-to-bottom in LEGEND_ORDER, and the block grows upward
  * from the bottom margin as rows appear, so the lowest row stays pinned
@@ -93,8 +93,11 @@ export function drawLegend(
   rows: LegendRow[],
   canvasWidth: number,
   canvasHeight: number,
+  stoppedCount = 0,
+  stoppedAsDot = true,
 ): void {
-  if (rows.length === 0) return
+  const showStopped = stoppedAsDot && stoppedCount > 0
+  if (rows.length === 0 && !showStopped) return
 
   const s = canvasWidth / 1920
   const margin = MARGIN * s
@@ -106,7 +109,20 @@ export function drawLegend(
   const rightX = canvasWidth - margin
   const bottomBaselineY = canvasHeight - margin
 
-  const texts = rows.map((row) => `${row.label} ${row.count}`)
+  const displayRows = rows.map((row) => ({
+    text: `${row.label} ${row.count}`,
+    color: VESSEL_COLORS[row.type],
+    alpha: row.type === 'unknown' ? OTHER_DOT_ALPHA : DOT_ALPHA,
+  }))
+  if (showStopped) {
+    displayRows.push({
+      text: `Stopped ${stoppedCount}`,
+      color: STOPPED_COLOR,
+      alpha: DOT_ALPHA,
+    })
+  }
+  const texts = displayRows.map((row) => row.text)
+  const rowCount = displayRows.length
   const widestTextWidth = Math.max(...texts.map((text) => estimateTextWidth(text, fontPx)))
 
   // One left edge for the whole block, set by the widest row. Solving
@@ -117,8 +133,8 @@ export function drawLegend(
 
   ctx.save()
 
-  rows.forEach((row, index) => {
-    const baselineY = bottomBaselineY - (rows.length - 1 - index) * rowSpacing
+  displayRows.forEach((row, index) => {
+    const baselineY = bottomBaselineY - (rowCount - 1 - index) * rowSpacing
     const text = texts[index]
 
     // Roughly the text's own optical centre: a baseline sits at the
@@ -129,8 +145,8 @@ export function drawLegend(
     ctx.beginPath()
     ctx.arc(dotCx, dotCy, dotRadius, 0, Math.PI * 2)
     ctx.closePath()
-    ctx.fillStyle = VESSEL_COLORS[row.type]
-    ctx.globalAlpha = row.type === 'unknown' ? OTHER_DOT_ALPHA : DOT_ALPHA
+    ctx.fillStyle = row.color
+    ctx.globalAlpha = row.alpha
     ctx.fill()
 
     ctx.textAlign = 'left'

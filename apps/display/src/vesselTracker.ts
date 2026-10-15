@@ -341,11 +341,12 @@ export function renderFrame(
     return a.mmsi < b.mmsi ? -1 : a.mmsi > b.mmsi ? 1 : 0
   })
 
-  const nonHeroEntries = byStackOrder.filter((entry) => !heroMmsis.has(entry.mmsi))
-  const isStopped = (entry: FrameEntry): boolean =>
-    render.config.stoppedAsDot && isStoppedForGlyph(entry.eased.lastFix.sogKn)
-  const stoppedEntries = nonHeroEntries.filter(isStopped)
-  const movingEntries = nonHeroEntries.filter((entry) => !isStopped(entry))
+  const isStoppedStyle = (entry: FrameEntry): boolean =>
+    !heroMmsis.has(entry.mmsi) &&
+    render.config.stoppedAsDot &&
+    isStoppedForGlyph(entry.eased.lastFix.sogKn)
+  const stoppedEntries = byStackOrder.filter(isStoppedStyle)
+  const movingEntries = byStackOrder.filter((entry) => !heroMmsis.has(entry.mmsi) && !isStoppedStyle(entry))
 
   for (const entry of stoppedEntries) {
     // VIS-7: unknown-type circles additionally scale by unknownScale --
@@ -436,14 +437,16 @@ export function renderFrame(
   // VIS-7: hero-only labels draw after every hero glyph.
   drawHeroLabels(ctx, heroLabelInputs, render.canvasWidth, render.canvasHeight, render.config.labelSize)
 
-  // VIS-8: both the header count and the legend are grouped by type over
-  // the SAME basis -- the vessels this frame actually drew. `visible` is
-  // renderFrame's existing revealed-only array, so this is a reduce over
-  // a pass that already ran, not a second walk of the tracked map, and a
-  // vessel drawn as a dot counts exactly like any other.
+  // Keep the header total on all visible vessels, while the type legend
+  // excludes non-hero stopped-style vessels and counts those separately.
   const countsByType: Partial<Record<VesselType, number>> = {}
+  let stoppedCount = 0
   for (const entry of visible) {
-    countsByType[entry.vesselType] = (countsByType[entry.vesselType] ?? 0) + 1
+    if (isStoppedStyle(entry)) {
+      stoppedCount++
+    } else {
+      countsByType[entry.vesselType] = (countsByType[entry.vesselType] ?? 0) + 1
+    }
   }
 
   // VIS-7: faint area title, drawn last -- now carrying VIS-8's count.
@@ -453,6 +456,6 @@ export function renderFrame(
 
   // VIS-8: the palette legend, bottom-right, after the area title.
   if (render.config.legendEnabled) {
-    drawLegend(ctx, buildLegendRows(countsByType), render.canvasWidth, render.canvasHeight)
+    drawLegend(ctx, buildLegendRows(countsByType), render.canvasWidth, render.canvasHeight, stoppedCount, render.config.stoppedAsDot)
   }
 }

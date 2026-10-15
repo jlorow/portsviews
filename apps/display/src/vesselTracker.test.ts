@@ -1427,8 +1427,8 @@ function expectedScreenHeading(headingDeg: number): number {
 }
 
 // ===================== VIS-8: legend and live vessel count ==============
-// Both the header count and the legend count REVEALED vessels only -- the
-// ones this frame actually drew -- grouped by type, dots included.
+// Header and legend fixtures use REVEALED vessels only -- the ones this
+// frame actually drew -- with stopped-style vessels counted separately.
 //
 // Fixture, used by every scenario below: periodSec 360 makes
 // sweepAngleDeg(nowMs, 360) === nowMs/1000, an exact-degree clock (the
@@ -1440,8 +1440,8 @@ function expectedScreenHeading(headingDeg: number): number {
 // 275s then reveals the west vessel too.
 //
 // 2 cargo + 1 tanker + 1 unknown east (revealed), 1 ferry west (not yet).
-// The tanker is stopped, so it is a dot under A2 and must still count.
-function buildLegendFixture(order: 'natural' | 'reversed' = 'natural') {
+// Tanker and unknown are stopped and should share the Stopped count.
+function buildLegendFixture(order: 'natural' | 'reversed' = 'natural', allMoving = false) {
   const tracked = createTrackedVesselMap()
   const clientState = new Map<string, ClientVesselEntry>()
 
@@ -1452,7 +1452,8 @@ function buildLegendFixture(order: 'natural' | 'reversed' = 'natural') {
     { mmsi: 'LEGUNKNW1', type: null, lon: 1.56, sogKn: 0 },
     { mmsi: 'LEGFERRY1', type: 'ferry', lon: 1.40, sogKn: 0 },
   ]
-  const ordered = order === 'reversed' ? [...defs].reverse() : defs
+  const fixtures = allMoving ? defs.map((d) => ({ ...d, sogKn: 5 })) : defs
+  const ordered = order === 'reversed' ? [...fixtures].reverse() : fixtures
 
   for (const d of ordered) {
     if (d.type !== null) clientState.set(d.mmsi, { vesselType: d.type })
@@ -1522,35 +1523,34 @@ function legendTexts(ctx: ReturnType<typeof createMockCtx>): string[] {
   )
 }
 
-// Scenario: exactly three legend rows -- Cargo 2, Tanker 1, Other 1. No
-// Ferry row, because that vessel is not revealed yet.
+// Scenario: stopped vessels leave their type rows and appear in one
+// Stopped row; the unrevealed ferry is still absent.
 {
   const ctx = runLegendFrames(buildLegendFixture())
   assert(
-    JSON.stringify(legendTexts(ctx)) === JSON.stringify(['Cargo 2', 'Tanker 1', 'Other 1']),
-    `legend-rows: exactly Cargo 2 / Tanker 1 / Other 1, no Ferry row (got ${JSON.stringify(legendTexts(ctx))})`,
+    JSON.stringify(legendTexts(ctx)) === JSON.stringify(['Cargo 2', 'Stopped 2']),
+    `legend-rows: Cargo 2 plus Stopped 2, with no stopped type rows or unrevealed Ferry (got ${JSON.stringify(legendTexts(ctx))})`,
   )
 
-  // Rows read top-to-bottom in LEGEND_ORDER: cargo highest on the canvas
-  // (smallest y), "Other" pinned at the bottom margin.
+  // Type rows stack above the final Stopped row, pinned at the bottom margin.
   const ys = ctx._fillTexts().filter((t) => legendTexts(ctx).includes(t.text)).map((t) => t.y)
   assert(
-    ys.length === 3 && ys[0] < ys[1] && ys[1] < ys[2],
-    `legend-rows: rows stack upward, cargo highest (ys ${JSON.stringify(ys)})`,
+    ys.length === 2 && ys[0] < ys[1],
+    `legend-rows: type row stacks above Stopped (ys ${JSON.stringify(ys)})`,
   )
   // 24px * s row spacing at canvasWidth 1920 (s = 1), hardcoded.
   assert(
-    Math.abs(ys[1] - ys[0] - 24) < 1e-9 && Math.abs(ys[2] - ys[1] - 24) < 1e-9,
+    Math.abs(ys[1] - ys[0] - 24) < 1e-9,
     `legend-rows: 24px row spacing at s=1 (ys ${JSON.stringify(ys)})`,
   )
   // Bottom row baseline sits 48px * s above the bottom edge.
-  assert(Math.abs(ys[2] - (1080 - 48)) < 1e-9, `legend-rows: bottom row baseline at canvasHeight-48 (got ${ys[2]})`)
+  assert(Math.abs(ys[1] - (1080 - 48)) < 1e-9, `legend-rows: Stopped baseline at canvasHeight-48 (got ${ys[1]})`)
 }
 
-// Scenario: swatch colours and alphas -- "Other" is dimmed, the typed rows
-// are not.
+// Scenario: normal swatch colours and alphas remain unchanged; "Other"
+// remains dimmed when it is a moving vessel.
 {
-  const ctx = runLegendFrames(buildLegendFixture())
+  const ctx = runLegendFrames(buildLegendFixture('natural', true))
   // The only ctx.fill() calls at alpha != 1 are the legend swatches: every
   // glyph fill is at alpha 1 (drawGlyph/drawDot both set it), rings are
   // off, the sweep never calls fill(), and heroes are off.
@@ -1563,6 +1563,77 @@ function legendTexts(ctx: ReturnType<typeof createMockCtx>): string[] {
     ]),
     `legend-swatches: cargo/tanker at 0.85, Other dimmed to 0.5 (got ${JSON.stringify(swatches)})`,
   )
+}
+
+// Scenario: the Stopped row is a count-bearing, filled stopped-color
+// swatch, aligned with type rows and pinned to the bottom baseline.
+{
+  const rows: LegendRow[] = [
+    { type: 'cargo', label: 'Cargo', count: 3 },
+    { type: 'tanker', label: 'Tanker', count: 1 },
+  ]
+  const ctx = createMockCtx()
+  drawLegend(ctx, rows, 1920, 1080, 2)
+  assert(
+    JSON.stringify(ctx._fillTexts().map((text) => text.text)) === JSON.stringify(['Cargo 3', 'Tanker 1', 'Stopped 2']),
+    `legend-stopped: Stopped includes its count and no extra count text (got ${JSON.stringify(ctx._fillTexts().map((text) => text.text))})`,
+  )
+  assert(
+    ctx._fills().some((fill) => fill.fillStyle === STOPPED_COLOR && fill.globalAlpha === 0.85),
+    `legend-stopped: filled swatch uses STOPPED_COLOR at the standard alpha (got ${JSON.stringify(ctx._fills())})`,
+  )
+  const arcs = ctx._calls
+    .filter((call) => call.startsWith('arc('))
+    .map((call) => call.slice('arc('.length, -1).split(',').map(Number))
+  assert(arcs.length === 3 && arcs.every((arc) => arc[2] === 5), `legend-stopped: uses the standard 5px swatch radius (got ${JSON.stringify(arcs)})`)
+  assert(arcs.every((arc) => arc[0] === arcs[0]?.[0]), `legend-stopped: swatches share one aligned x (got ${JSON.stringify(arcs.map((arc) => arc[0]))})`)
+  assert(ctx._fillTexts()[2]?.y === 1080 - 48, `legend-stopped: bottom baseline stays at canvasHeight-48 (got ${ctx._fillTexts()[2]?.y})`)
+}
+
+// Scenario: no Stopped row is drawn at zero stopped count or when stopped
+// rendering is disabled.
+{
+  const rows: LegendRow[] = [{ type: 'cargo', label: 'Cargo', count: 1 }]
+  const noStopped = createMockCtx()
+  drawLegend(noStopped, rows, 1920, 1080)
+  assert(!noStopped._fillTexts().some((text) => text.text.startsWith('Stopped')), 'legend-stopped-hidden: zero count omits Stopped')
+
+  const disabled = createMockCtx()
+  drawLegend(disabled, rows, 1920, 1080, 2, false)
+  assert(!disabled._fillTexts().some((text) => text.text.startsWith('Stopped')), 'legend-stopped-hidden: stoppedAsDot false omits Stopped')
+}
+
+// Scenario: no stopped-style vessels means no Stopped row.
+{
+  const ctx = runLegendFrames(buildLegendFixture('natural', true))
+  assert(!legendTexts(ctx).some((text) => text.startsWith('Stopped')), 'legend-no-stopped: moving-only fixture omits Stopped')
+}
+
+// Scenario: disabling stopped style restores all stopped ships to their
+// type rows and suppresses the Stopped row.
+{
+  const ctx = runLegendFrames(buildLegendFixture(), { stoppedAsDot: false })
+  assert(
+    JSON.stringify(legendTexts(ctx)) === JSON.stringify(['Cargo 2', 'Tanker 1', 'Other 1']),
+    `legend-stopped-disabled: stopped vessels return to type rows (got ${JSON.stringify(legendTexts(ctx))})`,
+  )
+}
+
+// Scenario: heroes remain represented in their type row even when stopped
+// style is enabled globally.
+{
+  const tracked = createTrackedVesselMap()
+  const clientState = new Map<string, ClientVesselEntry>([['LEGENDHERO', { vesselType: 'cargo' }]])
+  onFixArrived(tracked, fix('LEGENDHERO', IN_VIEW_LAT, IN_VIEW_LON, 1000, 0.5))
+  const ctx = createMockCtx()
+  renderFrame(tracked, clientState, ctx, legendRenderContext(1000, {
+    heroesEnabled: true,
+    glowEnabled: false,
+    labelSize: 'off',
+    sweepPeriodSec: 0,
+  }))
+  assert(legendTexts(ctx).includes('Cargo 1'), `legend-hero: hero remains in its type row (got ${JSON.stringify(legendTexts(ctx))})`)
+  assert(!legendTexts(ctx).some((text) => text.startsWith('Stopped')), 'legend-hero: no Stopped row for a hero')
 }
 
 // Scenario: row order is fixed, not discovery order.
@@ -1590,9 +1661,8 @@ function legendTexts(ctx: ReturnType<typeof createMockCtx>): string[] {
   )
 }
 
-// Scenario: revealing the ferry adds a Ferry row and moves the header to
-// 5 VESSELS. Third frame at 275s -- the beam crosses the ferry's bearing
-// of 270 between 95 and 275.
+// Scenario: revealing the stopped ferry increments Stopped and moves the
+// header total to 5 VESSELS.
 {
   const fixture = buildLegendFixture()
   runLegendFrames(fixture)
@@ -1605,8 +1675,8 @@ function legendTexts(ctx: ReturnType<typeof createMockCtx>): string[] {
     `legend-reveal: header reads "5 VESSELS" once the ferry is revealed (got ${JSON.stringify(header?.text)})`,
   )
   assert(
-    JSON.stringify(legendTexts(ctx)) === JSON.stringify(['Cargo 2', 'Tanker 1', 'Ferry 1', 'Other 1']),
-    `legend-reveal: a Ferry row appears, in LEGEND_ORDER position (got ${JSON.stringify(legendTexts(ctx))})`,
+    JSON.stringify(legendTexts(ctx)) === JSON.stringify(['Cargo 2', 'Stopped 3']),
+    `legend-reveal: stopped Ferry joins Stopped, without a type row (got ${JSON.stringify(legendTexts(ctx))})`,
   )
 }
 

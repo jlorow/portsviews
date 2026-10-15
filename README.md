@@ -184,7 +184,11 @@ the radius status line.
 Ships are drawn as hulls, coloured and sized by type — cargo, tanker, ferry,
 naval, tug — with a wake trail behind each one showing where it has been. The
 four largest moving vessels are drawn at full size with a glow and labelled with
-their name, type and speed. Stopped vessels are drawn as dots. A slow radar
+their name, type and speed. Stopped (moored or anchored) ships are drawn in
+fluorescent yellow-green as their real hull, turned to the heading the ship
+itself reports; a ship that reports no heading is a small yellow-green dot;
+when it moves again it returns to its type colour; the legend has a Stopped
+line with a count. A slow radar
 sweep reveals each vessel the first time it passes. There is a live count and a
 legend in the corners.
 
