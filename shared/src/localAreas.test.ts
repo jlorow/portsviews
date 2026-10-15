@@ -99,6 +99,12 @@ const invalidCases = [
   { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, pmtilesUrl: 'https://example.com/test-z11.pmtiles' } } }, label: 'pmtilesUrl must be local path' },
   { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, pmtilesUrl: '/tiles/-invalid-z11.pmtiles' } } }, label: 'pmtilesUrl slug format' },
   { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, pmtilesUrl: `/tiles/${'a'.repeat(33)}-z11.pmtiles` } } }, label: 'pmtilesUrl slug length' },
+  // The zoom suffix is 11 through 14: z10 is shallower than anything the
+  // shipped map has, and z15 is deeper than make-area will ever cut.
+  { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, pmtilesUrl: '/tiles/test-z10.pmtiles' } } }, label: 'pmtilesUrl zoom below 11' },
+  { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, pmtilesUrl: '/tiles/test-z15.pmtiles' } } }, label: 'pmtilesUrl zoom above 14' },
+  { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, pmtilesUrl: '/tiles/test-zabc.pmtiles' } } }, label: 'pmtilesUrl non-numeric zoom' },
+  { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, pmtilesUrl: '/tiles/test-z.pmtiles' } } }, label: 'pmtilesUrl empty zoom suffix' },
   { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, extra: true } } }, label: 'unknown field' },
   { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, places: 'not-an-array' } } }, label: 'places is not an array' },
   { raw: { areas: { test: { displayName: 'X', centerLat: 0, centerLon: 0, radiusNm: 10, places: [{}] } } }, label: 'place missing fields' },
@@ -109,6 +115,8 @@ const invalidCases = [
   { raw: { basemaps: { dover: { pmtilesUrl: '/tiles/dover-z11.pmtiles', extra: true } } }, label: 'unknown basemap field' },
   { raw: { basemaps: { dover: { places: [] } } }, label: 'basemap requires pmtilesUrl' },
   { raw: { basemaps: { dover: { pmtilesUrl: '/tiles/nope.pmtiles' } } }, label: 'basemap pmtilesUrl pattern' },
+  { raw: { basemaps: { dover: { pmtilesUrl: '/tiles/dover-z10.pmtiles' } } }, label: 'basemap pmtilesUrl zoom below 11' },
+  { raw: { basemaps: { dover: { pmtilesUrl: '/tiles/dover-z15.pmtiles' } } }, label: 'basemap pmtilesUrl zoom above 14' },
   { raw: { basemaps: { dover: { pmtilesUrl: '/tiles/dover-z11.pmtiles', places: [{}] } } }, label: 'basemap places validation' },
 ]
 
@@ -135,6 +143,32 @@ assert(parseLocalAreas({
     },
   },
 }).ok, 'parseLocalAreas: accepts boundary slug, minimum radius, valid places and basemap')
+
+// --- the pmtilesUrl zoom suffix: 11 through 14, both record kinds ---
+//
+// A detailed extract (make-area --maxzoom 12..14) must be STATABLE in the
+// local file, or the display would have nothing to point at for a closer
+// view. z11 is what the shipped maps and the default build use.
+for (const zoom of [11, 12, 13, 14]) {
+  assert(
+    parseLocalAreas({
+      areas: {
+        mombasa: {
+          displayName: 'Mombasa',
+          centerLat: -4.0435,
+          centerLon: 39.6682,
+          radiusNm: 20,
+          pmtilesUrl: `/tiles/mombasa-z${zoom}.pmtiles`,
+        },
+      },
+    }).ok,
+    `parseLocalAreas: accepts a -z${zoom} area pmtilesUrl`,
+  )
+  assert(
+    parseLocalAreas({ basemaps: { dover: { pmtilesUrl: `/tiles/dover-z${zoom}.pmtiles` } } }).ok,
+    `parseLocalAreas: accepts a -z${zoom} basemap pmtilesUrl`,
+  )
+}
 assert(parseLocalAreas({
   areas: {
     constructor: {
@@ -178,7 +212,11 @@ assertEqual(resolveArea('mombasa', localFile)?.source, 'local', 'resolveArea: ex
 assertEqual(resolveArea('Mombasa', localFile), null, 'resolveArea: wrong case fails exact-match only')
 assertEqual(resolveArea('unknown', localFile), null, 'resolveArea: unknown key is null')
 
-assertEqual(basemapFor('dover', localFile)?.pmtilesUrl, '/tiles/dover-z11.pmtiles', 'basemapFor: built-in dover wins')
+assertEqual(
+  basemapFor('dover', localFile)?.pmtilesUrl,
+  '/tiles/dover-z11.pmtiles',
+  'basemapFor: the shipped dover map is used when the local file overrides nothing',
+)
 assertEqual(basemapFor('mombasa', localFile)?.pmtilesUrl, undefined, 'basemapFor: local area without pmtilesUrl has no basemap')
 
 const localWithBasemap: LocalAreasFile = {
@@ -193,20 +231,53 @@ const localWithBasemap: LocalAreasFile = {
     },
   },
   basemaps: {
+    // A user's OWN detailed dover archive. The URL is deliberately a
+    // different zoom from the shipped one: equal URLs could not tell the
+    // two precedence orders apart, so this has to be a value that only the
+    // override can produce.
     dover: {
-      pmtilesUrl: '/tiles/dover-z11.pmtiles',
+      pmtilesUrl: '/tiles/dover-z13.pmtiles',
       places: [{ name: 'Dover', lat: 51.1251, lon: 1.3129 }],
     },
   },
 }
-assertEqual(basemapFor('mombasa', localWithBasemap)?.pmtilesUrl, '/tiles/mombasa-z11.pmtiles', 'basemapFor: local area pmtilesUrl is used when present')
-assertEqual(basemapFor('dover', localWithBasemap)?.pmtilesUrl, '/tiles/dover-z11.pmtiles', 'basemapFor: built-in BasemapAreaConfig has precedence')
+assertEqual(
+  basemapFor('mombasa', localWithBasemap)?.pmtilesUrl,
+  '/tiles/mombasa-z11.pmtiles',
+  'basemapFor: a local area pmtilesUrl is used when that key has no built-in map and no basemaps entry',
+)
+assertEqual(
+  basemapFor('dover', localWithBasemap)?.pmtilesUrl,
+  '/tiles/dover-z13.pmtiles',
+  'basemapFor: a basemaps entry OVERRIDES the shipped map for a built-in key (dover with a local override)',
+)
+assertEqual(
+  basemapFor('dover', localWithBasemap)?.places?.[0]?.name,
+  'Dover',
+  'basemapFor: the overriding basemaps entry also supplies the places',
+)
 const localBasemapFallback = {
   basemaps: {
     mombasa: { pmtilesUrl: '/tiles/other-z11.pmtiles' },
   },
 }
-assertEqual(basemapFor('mombasa', localBasemapFallback)?.pmtilesUrl, '/tiles/other-z11.pmtiles', 'basemapFor: local basemaps entry is fallback')
+assertEqual(
+  basemapFor('mombasa', localBasemapFallback)?.pmtilesUrl,
+  '/tiles/other-z11.pmtiles',
+  'basemapFor: a local basemaps entry serves a key with no built-in map',
+)
+assertEqual(
+  basemapFor('sydney', { basemaps: { sydney: { pmtilesUrl: '/tiles/sydney-z14.pmtiles' } } })?.pmtilesUrl,
+  '/tiles/sydney-z14.pmtiles',
+  'basemapFor: an area with no shipped map gains one from a local basemaps entry',
+)
+// Only dover ships a map today (BASEMAP_AREAS is deliberately partial), so
+// the other built-in areas are the case where NOTHING is found.
+assertEqual(
+  basemapFor('portsaid', localFile),
+  undefined,
+  'basemapFor: an area with neither a shipped map nor a local entry has no basemap at all',
+)
 
 console.log(`localAreas tests: ${passed} passed, ${failed} failed`)
 if (failed > 0) {

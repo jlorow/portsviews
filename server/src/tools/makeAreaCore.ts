@@ -14,7 +14,48 @@ export interface MakeAreaArgs {
   buildDate?: string
   overwrite?: boolean
   dryRun?: boolean
+  /** Tile extract detail: 11 is the default and what the shipped maps use. */
+  maxZoom?: number
+  /** Confirms a much larger detailed extract (--maxzoom 13 or 14). */
+  yes?: boolean
   help?: boolean
+}
+
+/** The zoom a plain `make-area` build has always produced. */
+export const DEFAULT_MAX_ZOOM = 11
+export const MIN_MAX_ZOOM = 11
+export const MAX_MAX_ZOOM = 14
+
+/**
+ * From here up the extract stops being a small sidebar to a large download:
+ * pmtiles has to walk several more zoom levels' worth of tiles.
+ */
+export const DETAILED_ZOOM_MIN = 13
+
+export function isDetailedZoom(maxZoom: number): boolean {
+  return maxZoom >= DETAILED_ZOOM_MIN
+}
+
+/**
+ * A detailed extract is not built on a bare command line: --yes has to be
+ * typed out too, because the file can be many times the default size.
+ */
+export function needsDetailedZoomConfirmation(maxZoom: number, yes: boolean): boolean {
+  return isDetailedZoom(maxZoom) && !yes
+}
+
+/**
+ * Plain language, and honest about what is NOT known: this tool does not
+ * measure the size, the dry run printed right after it is what pmtiles
+ * itself reports.
+ */
+export function detailedZoomWarning(maxZoom: number): string {
+  return (
+    `Warning: a zoom-${maxZoom} map is much more detailed than the shipped maps, and it is MANY ` +
+    `TIMES LARGER than the default zoom-${DEFAULT_MAX_ZOOM} extract. How much larger is NOT ` +
+    `measured by this tool: the pmtiles dry run printed next is pmtiles' own estimate, and the ` +
+    `download still has to be checked against the free space on this computer.`
+  )
 }
 
 export interface BinaryLookupDeps {
@@ -59,7 +100,7 @@ export function parseMakeAreaArgs(args: readonly string[]): { ok: true; value: M
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]
-    if (seen.has(arg) && arg !== '--dry-run' && arg !== '--overwrite') {
+    if (seen.has(arg) && arg !== '--dry-run' && arg !== '--overwrite' && arg !== '--yes') {
       errors.push(`Duplicate option ${JSON.stringify(arg)}.`)
       continue
     }
@@ -75,6 +116,30 @@ export function parseMakeAreaArgs(args: readonly string[]): { ok: true; value: M
     }
     if (arg === '--dry-run') {
       value.dryRun = true
+      continue
+    }
+    if (arg === '--yes') {
+      value.yes = true
+      continue
+    }
+    if (arg === '--maxzoom') {
+      const next = args[i + 1]
+      if (!next || next.startsWith('--')) {
+        errors.push('Missing value for --maxzoom.')
+      } else {
+        const parsed = Number(next)
+        // Whole numbers only: '12.5' is not a zoom level, and neither is a
+        // blank or a word. 11 is the default, 14 is the deepest make-area
+        // can cut.
+        if (!Number.isInteger(parsed) || parsed < MIN_MAX_ZOOM || parsed > MAX_MAX_ZOOM) {
+          errors.push(
+            `Invalid --maxzoom value ${JSON.stringify(next)}: use a whole number from ${MIN_MAX_ZOOM} to ${MAX_MAX_ZOOM}.`,
+          )
+        } else {
+          value.maxZoom = parsed
+          i += 1
+        }
+      }
       continue
     }
     if (arg === '--name') {
@@ -246,6 +311,7 @@ export function buildExtractArgs(
   centerLat: number,
   centerLon: number,
   radiusNm: number,
+  maxZoom: number = DEFAULT_MAX_ZOOM,
 ): string[] {
   const box = extractBboxFor(centerLat, centerLon, radiusNm)
   return [
@@ -253,8 +319,26 @@ export function buildExtractArgs(
     source,
     tempPath,
     `--bbox=${box.minLon.toFixed(4)},${box.minLat.toFixed(4)},${box.maxLon.toFixed(4)},${box.maxLat.toFixed(4)}`,
-    '--maxzoom=11',
+    `--maxzoom=${maxZoom}`,
   ]
+}
+
+/**
+ * The same extract with pmtiles' own --dry-run appended: it reports the
+ * tiles it would pull without downloading or writing any of them.
+ */
+export function withPmtilesDryRun(args: readonly string[]): string[] {
+  return [...args, '--dry-run']
+}
+
+/** The file name a detailed or default extract is written to. */
+export function pmtilesFileName(key: string, maxZoom: number = DEFAULT_MAX_ZOOM): string {
+  return `${key}-z${maxZoom}.pmtiles`
+}
+
+/** The URL recorded in areas.local.json for that file. */
+export function pmtilesUrlFor(key: string, maxZoom: number = DEFAULT_MAX_ZOOM): string {
+  return `/tiles/${pmtilesFileName(key, maxZoom)}`
 }
 
 export function findPmtilesBinary(
@@ -364,7 +448,13 @@ export function ensureLocalAreaFileIsValid(file: LocalAreasFile): LocalAreasFile
   return result.value
 }
 
-export function buildCustomAreaRecord(name: string, lat: number, lon: number, radiusNm: number): LocalAreaRecord {
+export function buildCustomAreaRecord(
+  name: string,
+  lat: number,
+  lon: number,
+  radiusNm: number,
+  maxZoom: number = DEFAULT_MAX_ZOOM,
+): LocalAreaRecord {
   const key = slugify(name)
   return {
     displayName: name,
@@ -372,7 +462,7 @@ export function buildCustomAreaRecord(name: string, lat: number, lon: number, ra
     centerLon: lon,
     radiusNm,
     places: [],
-    pmtilesUrl: `/tiles/${key}-z11.pmtiles`,
+    pmtilesUrl: pmtilesUrlFor(key, maxZoom),
   }
 }
 

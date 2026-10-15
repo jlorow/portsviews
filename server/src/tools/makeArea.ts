@@ -4,16 +4,25 @@ import { fileURLToPath } from 'node:url'
 import readline from 'node:readline/promises'
 import { DEFAULT_RADIUS_NM, DEMO_AREAS, parseLocalAreas, slugify, type LocalAreasFile } from '@wake/shared'
 import {
+  DEFAULT_MAX_ZOOM,
+  MAX_MAX_ZOOM,
+  MIN_MAX_ZOOM,
   buildBasemapRecord,
   buildCustomAreaRecord,
   buildExtractArgs,
   candidateBuildDates,
+  detailedZoomWarning,
   ensureLocalAreaFileIsValid,
   findPmtilesBinary,
+  isDetailedZoom,
   isValidDateCode,
   mergeLocalAreaRecord,
+  needsDetailedZoomConfirmation,
   parseMakeAreaArgs,
+  pmtilesFileName,
+  pmtilesUrlFor,
   runPmtiles,
+  withPmtilesDryRun,
   type MakeAreaArgs,
 } from './makeAreaCore.ts'
 
@@ -25,6 +34,8 @@ const localAreasPath = path.join(repoRoot, 'areas.local.json')
 function printUsage(): void {
   console.log('Usage: pnpm make-area [--name "Mombasa" --lat -4.0435 --lon 39.6682 [--radius 20]] [--source <url-or-path> | --build-date YYYYMMDD] [--overwrite] [--dry-run]')
   console.log('       pnpm make-area --builtin <dover|istanbul|portsaid|sydney> [--source <url-or-path> | --build-date YYYYMMDD] [--overwrite] [--dry-run]')
+  console.log(`       add [--maxzoom ${MIN_MAX_ZOOM}-${MAX_MAX_ZOOM}] to any of the above for a more detailed map (${MIN_MAX_ZOOM} is the default)`)
+  console.log(`       --maxzoom ${MIN_MAX_ZOOM + 2} or ${MAX_MAX_ZOOM} builds a much larger file and also needs --yes`)
   console.log('       pnpm make-area')
   console.log('       pnpm make-area --help')
 }
@@ -156,6 +167,8 @@ async function main(): Promise<void> {
       ...validated.value,
       overwrite: args.overwrite,
       dryRun: args.dryRun,
+      maxZoom: args.maxZoom,
+      yes: args.yes,
     }
   }
 
@@ -166,6 +179,8 @@ async function main(): Promise<void> {
   }
 
   const workingFile = readLocalFile()
+  // Every file name and recorded URL below follows this one number.
+  const maxZoom = args.maxZoom ?? DEFAULT_MAX_ZOOM
 
   let key: string
   let centerLat: number
@@ -185,7 +200,9 @@ async function main(): Promise<void> {
     mergedFile = ensureLocalAreaFileIsValid(mergeLocalAreaRecord(workingFile, {
       kind: 'builtin',
       key,
-      value: buildBasemapRecord(`/tiles/${key}-z11.pmtiles`),
+      // A built-in area is always recorded under "basemaps", which is what
+      // makes a detailed extract REPLACE the shipped map for that area.
+      value: buildBasemapRecord(pmtilesUrlFor(key, maxZoom)),
       overwrite: args.overwrite || args.dryRun,
     }))
   } else {
@@ -205,12 +222,12 @@ async function main(): Promise<void> {
     mergedFile = ensureLocalAreaFileIsValid(mergeLocalAreaRecord(workingFile, {
       kind: 'custom',
       key,
-      value: buildCustomAreaRecord(customArgs.name, centerLat, centerLon, radiusNm),
+      value: buildCustomAreaRecord(customArgs.name, centerLat, centerLon, radiusNm, maxZoom),
       overwrite: args.overwrite || args.dryRun,
     }))
   }
 
-  const tilePath = path.join(repoRoot, 'apps', 'display', 'public', 'tiles', `${key}-z11.pmtiles`)
+  const tilePath = path.join(repoRoot, 'apps', 'display', 'public', 'tiles', pmtilesFileName(key, maxZoom))
   if (fs.existsSync(tilePath) && !args.overwrite && !args.dryRun) {
     console.error(`Refusing to overwrite ${tilePath}. Add --overwrite to replace it.`)
     process.exit(1)
@@ -253,7 +270,28 @@ async function main(): Promise<void> {
   }
 
   const tempPath = `${tilePath}.${process.pid}.tmp`
-  const extractArgs = buildExtractArgs(chosenSource!, tempPath, centerLat, centerLon, radiusNm)
+  const extractArgs = buildExtractArgs(chosenSource!, tempPath, centerLat, centerLon, radiusNm, maxZoom)
+
+  if (isDetailedZoom(maxZoom)) {
+    // Say it plainly and first, then let pmtiles itself report what the
+    // extract would contain: this tool does not measure the size.
+    console.warn(detailedZoomWarning(maxZoom))
+    const probe = runPmtiles(binaryPath, withPmtilesDryRun(extractArgs))
+    const probeOutput = `${(probe.stdout ?? '').toString()}${(probe.stderr ?? '').toString()}`.trim()
+    console.log("pmtiles' own dry run:")
+    console.log(probeOutput || 'pmtiles reported nothing for the dry run.')
+    if (probe.status !== 0) {
+      console.error(`The dry run of a zoom-${maxZoom} extract failed; nothing was written.`)
+      process.exit(1)
+    }
+    // A dry run of our own writes nothing, so there is nothing to refuse.
+    if (needsDetailedZoomConfirmation(maxZoom, args.yes === true) && !args.dryRun) {
+      console.error(`Refusing to download a zoom-${maxZoom} map without --yes; nothing was written.`)
+      console.error(`Re-run the same command with --yes to build it, or leave --maxzoom off for the default zoom-${DEFAULT_MAX_ZOOM} map.`)
+      process.exit(1)
+    }
+  }
+
   if (args.dryRun) {
     console.log(`Dry run: would run pmtiles with arguments ${JSON.stringify(extractArgs)}`)
   } else {

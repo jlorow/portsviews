@@ -25,7 +25,11 @@ export interface LocalAreasFile {
 }
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
-const PMTILES_RE = /^\/tiles\/([a-z0-9]+(?:-[a-z0-9]+)*)-z11\.pmtiles$/
+// A tile extract, with the zoom level it was cut to: z11 is what make-area
+// writes by default, z12 to z14 are the detailed extracts (--maxzoom).
+const MIN_PMTILES_ZOOM = 11
+const MAX_PMTILES_ZOOM = 14
+const PMTILES_RE = /^\/tiles\/([a-z0-9]+(?:-[a-z0-9]+)*)-z(1[1-4])\.pmtiles$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -145,7 +149,9 @@ function validateAreaRecord(key: string, raw: unknown): { errors: string[]; valu
 
   const pmtilesUrl = hasOwn(raw, 'pmtilesUrl') ? raw.pmtilesUrl : undefined
   if (pmtilesUrl !== undefined && !isPmtilesUrl(pmtilesUrl)) {
-    errors.push(`areas.${key}.pmtilesUrl: must be /tiles/<valid-slug>-z11.pmtiles, with a slug of at most 32 characters.`)
+    errors.push(
+      `areas.${key}.pmtilesUrl: must be /tiles/<valid-slug>-z${MIN_PMTILES_ZOOM}.pmtiles through -z${MAX_PMTILES_ZOOM}.pmtiles, with a slug of at most 32 characters.`,
+    )
   }
 
   const areaName = key
@@ -207,7 +213,9 @@ function validateBasemapRecord(key: string, raw: unknown): { errors: string[]; v
   }
 
   if (!('pmtilesUrl' in raw) || !isPmtilesUrl(raw.pmtilesUrl)) {
-    errors.push(`basemaps.${key}.pmtilesUrl: must be /tiles/<valid-slug>-z11.pmtiles, with a slug of at most 32 characters.`)
+    errors.push(
+      `basemaps.${key}.pmtilesUrl: must be /tiles/<valid-slug>-z${MIN_PMTILES_ZOOM}.pmtiles through -z${MAX_PMTILES_ZOOM}.pmtiles, with a slug of at most 32 characters.`,
+    )
   }
 
   const placesErrors = validatePlaces(raw.places, `basemaps.${key}.places`)
@@ -368,6 +376,18 @@ export function resolveArea(
 }
 
 export function basemapFor(key: string, local: LocalAreasFile | null): BasemapAreaConfig | undefined {
+  // A basemaps entry comes FIRST, ahead of the shipped map. That is what
+  // makes it a per-area override: `make-area --builtin dover --maxzoom 13`
+  // records under basemaps, and the user's own detailed archive has to win
+  // over the shipped z11 one the display would otherwise load.
+  if (local && local.basemaps && Object.prototype.hasOwnProperty.call(local.basemaps, key)) {
+    const basemap = local.basemaps[key]
+    return {
+      pmtilesUrl: basemap.pmtilesUrl,
+      places: basemap.places ?? [],
+    }
+  }
+
   if (Object.prototype.hasOwnProperty.call(BASEMAP_AREAS, key)) {
     return BASEMAP_AREAS[key as keyof typeof BASEMAP_AREAS]
   }
@@ -379,14 +399,6 @@ export function basemapFor(key: string, local: LocalAreasFile | null): BasemapAr
         pmtilesUrl: area.pmtilesUrl,
         places: area.places ?? [],
       }
-    }
-  }
-
-  if (local && local.basemaps && Object.prototype.hasOwnProperty.call(local.basemaps, key)) {
-    const basemap = local.basemaps[key]
-    return {
-      pmtilesUrl: basemap.pmtilesUrl,
-      places: basemap.places ?? [],
     }
   }
 
