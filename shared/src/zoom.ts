@@ -103,6 +103,7 @@ export function panCenter(
   direction: PanDirection,
   radiusNm: number,
   config: ProjectionConfig,
+  fraction: number = PAN_FRACTION,
 ): PanCenterResult {
   // Required screen displacement of the old centre, in PAN_FRACTION units.
   let vx = 0
@@ -131,8 +132,8 @@ export function panCenter(
   const rotatedY = -vx * sinTheta + vy * cosTheta
 
   // Undo the mirror, which negates x only.
-  const offsetXnm = (config.mirrorX ? -rotatedX : rotatedX) * PAN_FRACTION * radiusNm
-  const offsetYnm = rotatedY * PAN_FRACTION * radiusNm
+  const offsetXnm = (config.mirrorX ? -rotatedX : rotatedX) * fraction * radiusNm
+  const offsetYnm = rotatedY * fraction * radiusNm
 
   const nextCenterLat = centerLat + offsetYnm / 60
   const lonDegPerNm = 1 / (60 * Math.cos((nextCenterLat * Math.PI) / 180))
@@ -241,6 +242,189 @@ export const WHEEL_STEP_MIN_INTERVAL_MS = 300
  * caller's lastStepMs is left alone. Ctrl, Alt and Cmd combinations belong
  * to the browser (pinch-zoom and page scroll) and are never consumed.
  */
+/**
+ * Exact inverse of mapProjectUnclipped: given a canvas pixel (x, y),
+ * return the geographic point { lat, lon } that projects to it.
+ */
+export function unproject(
+  x: number,
+  y: number,
+  centerLat: number,
+  centerLon: number,
+  radiusNm: number,
+  config: ProjectionConfig,
+  canvasWidth: number,
+  canvasHeight: number,
+): { lat: number; lon: number } {
+  const scale = Math.min(canvasWidth, canvasHeight) / 2 / radiusNm
+
+  // Undo rotation: rotate about canvas centre by -rotationDeg.
+  const theta = (config.rotationDeg * Math.PI) / 180
+  const cx = canvasWidth / 2
+  const cy = canvasHeight / 2
+  const dx = x - cx
+  const dy = y - cy
+  const ux = cx + dx * Math.cos(-theta) - dy * Math.sin(-theta)
+  const uy = cy + dx * Math.sin(-theta) + dy * Math.cos(-theta)
+
+  // Undo mirror.
+  const px = config.mirrorX ? canvasWidth - ux : ux
+
+  const lonOffsetNm = (px - canvasWidth / 2) / scale
+  const latOffsetNm = (canvasHeight / 2 - uy) / scale
+
+  const lat = centerLat + latOffsetNm / 60
+  const lon = centerLon + lonOffsetNm / (60 * Math.cos((centerLat * Math.PI) / 180))
+
+  return { lat, lon }
+}
+
+export interface PointerView {
+  centerLat: number
+  centerLon: number
+  radiusNm: number
+}
+
+/**
+ * Return a new view whose centre is chosen so the geographic point under
+ * (pointerX, pointerY) before the zoom projects to the same pixel after it.
+ * No clamping is applied here; the caller clamps to the feed box.
+ */
+export function zoomAtPoint(
+  view: PointerView,
+  newRadiusNm: number,
+  pointerX: number,
+  pointerY: number,
+  config: ProjectionConfig,
+  canvasWidth: number,
+  canvasHeight: number,
+): PointerView {
+  // Geographic point under the pointer in the OLD view.
+  const anchor = unproject(pointerX, pointerY, view.centerLat, view.centerLon, view.radiusNm, config, canvasWidth, canvasHeight)
+
+  // In the new view the anchor must project to (pointerX, pointerY).
+  // mapProjectUnclipped gives:
+  //   pointerX_pre = w/2 + lonOffsetNm * newScale   (before mirror/rotate)
+  //   pointerY_pre = h/2 - latOffsetNm * newScale
+  // where offsets are from the NEW centre. Solving for the new centre:
+  const newScale = Math.min(canvasWidth, canvasHeight) / 2 / newRadiusNm
+
+  // Undo rotation and mirror on the pointer pixel to get pre-transform coords.
+  const theta = (config.rotationDeg * Math.PI) / 180
+  const cx = canvasWidth / 2
+  const cy = canvasHeight / 2
+  const dx = pointerX - cx
+  const dy = pointerY - cy
+  const ux = cx + dx * Math.cos(-theta) - dy * Math.sin(-theta)
+  const uy = cy + dx * Math.sin(-theta) + dy * Math.cos(-theta)
+  const px = config.mirrorX ? canvasWidth - ux : ux
+
+  // lonOffsetNm = (px - w/2) / newScale  →  anchor.lon = newCenterLon + lonOffsetNm / (60 * cos(newCenterLat))
+  // latOffsetNm = (h/2 - uy) / newScale  →  anchor.lat = newCenterLat + latOffsetNm / 60
+  const lonOffsetNm = (px - canvasWidth / 2) / newScale
+  const latOffsetNm = (canvasHeight / 2 - uy) / newScale
+
+  const newCenterLat = anchor.lat - latOffsetNm / 60
+  const newCenterLon = anchor.lon - lonOffsetNm / (60 * Math.cos((newCenterLat * Math.PI) / 180))
+
+  return { centerLat: newCenterLat, centerLon: newCenterLon, radiusNm: newRadiusNm }
+}
+
+/**
+ * Return the view whose centre is moved so the geographic point that was
+ * under (fromX, fromY) is now under (toX, toY). No clamping applied.
+ */
+export function dragPanView(
+  view: PointerView,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  config: ProjectionConfig,
+  canvasWidth: number,
+  canvasHeight: number,
+): PointerView {
+  // Geographic point that was under fromX, fromY.
+  const anchor = unproject(fromX, fromY, view.centerLat, view.centerLon, view.radiusNm, config, canvasWidth, canvasHeight)
+
+  // We want anchor to project to (toX, toY) in the new view (same radius).
+  // Same algebra as zoomAtPoint but radiusNm is unchanged.
+  const scale = Math.min(canvasWidth, canvasHeight) / 2 / view.radiusNm
+  const theta = (config.rotationDeg * Math.PI) / 180
+  const cx = canvasWidth / 2
+  const cy = canvasHeight / 2
+  const dx = toX - cx
+  const dy = toY - cy
+  const ux = cx + dx * Math.cos(-theta) - dy * Math.sin(-theta)
+  const uy = cy + dx * Math.sin(-theta) + dy * Math.cos(-theta)
+  const px = config.mirrorX ? canvasWidth - ux : ux
+
+  const lonOffsetNm = (px - canvasWidth / 2) / scale
+  const latOffsetNm = (canvasHeight / 2 - uy) / scale
+
+  const newCenterLat = anchor.lat - latOffsetNm / 60
+  const newCenterLon = anchor.lon - lonOffsetNm / (60 * Math.cos((newCenterLat * Math.PI) / 180))
+
+  return { centerLat: newCenterLat, centerLon: newCenterLon, radiusNm: view.radiusNm }
+}
+
+/** Returns 5 when Shift is held, 1 otherwise. */
+export function panKeyMultiplier(event: { shiftKey: boolean }): number {
+  return event.shiftKey ? 5 : 1
+}
+
+export interface ApplyWheelResult {
+  view: PointerView
+  lastStepMs: number
+}
+
+/**
+ * Pure controller for the wheel handler. Calls wheelZoomAction, steps the
+ * radius, zooms at the pointer, then clamps to the feed box.
+ * Returns the unchanged view and lastStepMs when the event is ignored.
+ */
+export function applyWheelAtPointer(
+  view: PointerView,
+  event: WheelZoomEvent,
+  nowMs: number,
+  lastStepMs: number,
+  steps: readonly number[],
+  feedBox: number[][][],
+  config: ProjectionConfig,
+  canvasWidth: number,
+  canvasHeight: number,
+  pointerX: number,
+  pointerY: number,
+): ApplyWheelResult {
+  const step = wheelZoomAction(event, nowMs, lastStepMs)
+  if (step === null) return { view, lastStepMs }
+
+  const newRadiusNm = stepRadius(steps, view.radiusNm, step.action)
+  const zoomed = zoomAtPoint(view, newRadiusNm, pointerX, pointerY, config, canvasWidth, canvasHeight)
+  const clamped = clampPanToFeed(zoomed.centerLat, zoomed.centerLon, newRadiusNm, feedBox)
+  return {
+    view: { centerLat: clamped.centerLat, centerLon: clamped.centerLon, radiusNm: newRadiusNm },
+    lastStepMs: step.stepAtMs,
+  }
+}
+
+/**
+ * Pure controller for the drag handler. Calls dragPanView then clamps.
+ */
+export function applyDrag(
+  view: PointerView,
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  feedBox: number[][][],
+  config: ProjectionConfig,
+  canvasWidth: number,
+  canvasHeight: number,
+): PointerView {
+  const moved = dragPanView(view, from.x, from.y, to.x, to.y, config, canvasWidth, canvasHeight)
+  const clamped = clampPanToFeed(moved.centerLat, moved.centerLon, view.radiusNm, feedBox)
+  return { centerLat: clamped.centerLat, centerLon: clamped.centerLon, radiusNm: view.radiusNm }
+}
+
 export function wheelZoomAction(
   event: WheelZoomEvent,
   nowMs: number,

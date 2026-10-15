@@ -318,5 +318,160 @@ assert(zoomKeyAction(keyEvent('=', { altKey: true })) === null, 'zoomKeyAction: 
 assert(zoomKeyAction(keyEvent('=', { targetIsEditable: true })) === null, 'zoomKeyAction: editable targets still ignored')
 assert(zoomKeyAction(keyEvent('ArrowUp')) === null, 'zoomKeyAction: arrows are panKeyAction\'s business, not this one\'s')
 
+// --- unproject round-trip -----------------------------------------------
+// unproject(project(p)) must recover the original lat/lon within 1e-6 deg.
+
+import { mapProjectUnclipped } from './projection.ts'
+import {
+  applyDrag,
+  applyWheelAtPointer,
+  dragPanView,
+  panKeyMultiplier,
+  unproject,
+  zoomAtPoint,
+  type PointerView,
+} from './zoom.ts'
+
+const DOVER_BOX: number[][][] = [[[51.4, 0.9], [50.8, 2.0]]]
+const SYDNEY_BOX: number[][][] = [[[-33.596, 150.818], [-34.264, 151.622]]]
+
+for (const mirrorX of [false, true]) {
+  for (const rotationDeg of [0, 30]) {
+    for (const radiusNm of [1, 5, 20]) {
+      for (const [lat, lon, label] of [[51.1, 1.45, 'dover'], [-33.93, 151.22, 'sydney']] as [number, number, string][]) {
+        const config = { mirrorX, rotationDeg }
+        const w = 1920, h = 1080
+        const projected = mapProjectUnclipped(lat, lon, lat, lon, radiusNm, config, w, h)
+        const recovered = unproject(projected.x, projected.y, lat, lon, radiusNm, config, w, h)
+        assert(
+          Math.abs(recovered.lat - lat) < 1e-6 && Math.abs(recovered.lon - lon) < 1e-6,
+          `unproject round-trip ${label} r=${radiusNm} mirror=${mirrorX} rot=${rotationDeg}: lat err=${Math.abs(recovered.lat - lat).toExponential(2)} lon err=${Math.abs(recovered.lon - lon).toExponential(2)}`,
+        )
+      }
+    }
+  }
+}
+
+// --- zoomAtPoint anchor invariance ---------------------------------------
+// The point under the pointer must project within 0.5 px of the pointer
+// after the zoom (before clamping), for both zoom directions, both mirrors.
+
+const POINTER_POSITIONS = [
+  [960, 540],   // centre
+  [200, 200],   // top-left
+  [1700, 900],  // bottom-right
+  [960, 100],   // top-centre
+  [100, 540],   // left-centre
+] as [number, number][]
+
+for (const mirrorX of [false, true]) {
+  const config = { mirrorX, rotationDeg: 0 }
+  const w = 1920, h = 1080
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 20 }
+  for (const [px, py] of POINTER_POSITIONS) {
+    for (const newRadius of [10, 40]) {
+      const zoomed = zoomAtPoint(view, newRadius, px, py, config, w, h)
+      const reprojected = mapProjectUnclipped(zoomed.centerLat, zoomed.centerLon, zoomed.centerLat, zoomed.centerLon, newRadius, config, w, h)
+      // The anchor geographic point under (px,py) in the old view:
+      const anchor = unproject(px, py, view.centerLat, view.centerLon, view.radiusNm, config, w, h)
+      const afterPx = mapProjectUnclipped(anchor.lat, anchor.lon, zoomed.centerLat, zoomed.centerLon, newRadius, config, w, h)
+      const dist = Math.hypot(afterPx.x - px, afterPx.y - py)
+      assert(
+        dist < 0.5,
+        `zoomAtPoint anchor invariance mirror=${mirrorX} ptr=(${px},${py}) r=${view.radiusNm}->${newRadius}: dist=${dist.toFixed(4)}px`,
+      )
+    }
+  }
+}
+
+// --- dragPanView anchor invariance ---------------------------------------
+// The point under fromX,fromY must project within 0.5 px of toX,toY after.
+
+{
+  const config = { mirrorX: false, rotationDeg: 0 }
+  const w = 1920, h = 1080
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 20 }
+  const from = { x: 400, y: 300 }
+  const to = { x: 500, y: 400 }
+  const dragged = dragPanView(view, from.x, from.y, to.x, to.y, config, w, h)
+  const anchor = unproject(from.x, from.y, view.centerLat, view.centerLon, view.radiusNm, config, w, h)
+  const afterPx = mapProjectUnclipped(anchor.lat, anchor.lon, dragged.centerLat, dragged.centerLon, dragged.radiusNm, config, w, h)
+  const dist = Math.hypot(afterPx.x - to.x, afterPx.y - to.y)
+  assert(dist < 0.5, `dragPanView anchor invariance: dist=${dist.toFixed(4)}px`)
+}
+
+// Dragging right by 100 px: the point under the start pixel is under the end pixel.
+{
+  const config = { mirrorX: true, rotationDeg: 0 }
+  const w = 1920, h = 1080
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 20 }
+  const from = { x: 800, y: 540 }
+  const to = { x: 900, y: 540 }
+  const dragged = dragPanView(view, from.x, from.y, to.x, to.y, config, w, h)
+  const anchor = unproject(from.x, from.y, view.centerLat, view.centerLon, view.radiusNm, config, w, h)
+  const afterPx = mapProjectUnclipped(anchor.lat, anchor.lon, dragged.centerLat, dragged.centerLon, dragged.radiusNm, config, w, h)
+  const dist = Math.hypot(afterPx.x - to.x, afterPx.y - to.y)
+  assert(dist < 0.5, `dragPanView right 100px mirror=true: dist=${dist.toFixed(4)}px`)
+}
+
+// --- panKeyMultiplier ----------------------------------------------------
+
+assert(panKeyMultiplier({ shiftKey: true }) === 5, 'panKeyMultiplier: shiftKey=true -> 5')
+assert(panKeyMultiplier({ shiftKey: false }) === 1, 'panKeyMultiplier: shiftKey=false -> 1')
+
+// --- applyWheelAtPointer -------------------------------------------------
+
+const noMod = { ctrlKey: false, metaKey: false, altKey: false }
+const steps20 = radiusStepsFor(20)
+const steps20s = radiusStepsFor(20) // sydney same default
+
+// Throttle: a second wheel event within 300ms is ignored.
+{
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 20 }
+  const r1 = applyWheelAtPointer(view, { deltaY: -5, ...noMod }, 10000, 9800, steps20, DOVER_BOX, { mirrorX: false, rotationDeg: 0 }, 1920, 1080, 960, 540)
+  assert(r1.view === view && r1.lastStepMs === 9800, 'applyWheelAtPointer: throttle within 300ms returns unchanged view')
+}
+
+// ctrl/meta/alt ignored.
+{
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 20 }
+  const rc = applyWheelAtPointer(view, { deltaY: -5, ctrlKey: true, metaKey: false, altKey: false }, 10000, 0, steps20, DOVER_BOX, { mirrorX: false, rotationDeg: 0 }, 1920, 1080, 960, 540)
+  assert(rc.view === view, 'applyWheelAtPointer: ctrlKey ignored')
+  const rm = applyWheelAtPointer(view, { deltaY: -5, ctrlKey: false, metaKey: true, altKey: false }, 10000, 0, steps20, DOVER_BOX, { mirrorX: false, rotationDeg: 0 }, 1920, 1080, 960, 540)
+  assert(rm.view === view, 'applyWheelAtPointer: metaKey ignored')
+  const ra = applyWheelAtPointer(view, { deltaY: -5, ctrlKey: false, metaKey: false, altKey: true }, 10000, 0, steps20, DOVER_BOX, { mirrorX: false, rotationDeg: 0 }, 1920, 1080, 960, 540)
+  assert(ra.view === view, 'applyWheelAtPointer: altKey ignored')
+}
+
+// Centre stays inside feed box after zoom at pointer, for dover and sydney at 1, 5, 20 nm.
+for (const [box, view, label] of [
+  [DOVER_BOX, { centerLat: 51.1, centerLon: 1.45, radiusNm: 20 }, 'dover'],
+  [SYDNEY_BOX, { centerLat: -33.93, centerLon: 151.22, radiusNm: 20 }, 'sydney'],
+] as [number[][][], PointerView, string][]) {
+  for (const startRadius of [1, 5, 20]) {
+    const v: PointerView = { ...view, radiusNm: startRadius }
+    const stepsForBox = radiusStepsFor(20)
+    const result = applyWheelAtPointer(v, { deltaY: -5, ...noMod }, 10000, 0, stepsForBox, box, { mirrorX: false, rotationDeg: 0 }, 1920, 1080, 960, 540)
+    const clamped = clampPanToFeed(result.view.centerLat, result.view.centerLon, result.view.radiusNm, box)
+    assert(
+      Math.abs(clamped.centerLat - result.view.centerLat) < 1e-9 && Math.abs(clamped.centerLon - result.view.centerLon) < 1e-9,
+      `applyWheelAtPointer centre inside feed box: ${label} r=${startRadius}`,
+    )
+  }
+}
+
+// --- old panCenter tests still pass (fraction parameter is optional) -----
+// The existing assertRoundTrip calls above already cover this; one extra
+// explicit check that the default fraction equals PAN_FRACTION.
+{
+  const config = { mirrorX: false, rotationDeg: 0 }
+  const explicit = panCenter(51.1, 1.45, 'right', 20, config, PAN_FRACTION)
+  const implicit = panCenter(51.1, 1.45, 'right', 20, config)
+  assert(
+    Math.abs(explicit.centerLat - implicit.centerLat) < 1e-12 && Math.abs(explicit.centerLon - implicit.centerLon) < 1e-12,
+    'panCenter: explicit PAN_FRACTION matches default (fraction param is backward-compatible)',
+  )
+}
+
 console.log(`${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1
