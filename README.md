@@ -165,6 +165,24 @@ input does not match the repo's validation rules. Add `WAKE_AREA=mombasa` to
 your repo-root `.env`, then restart **both the server and the display**. The
 local `areas.local.json` is ignored by git and is never committed.
 
+Add `--maxzoom 13` (or `14`) to that same command to build a more detailed map
+for close-in viewing:
+
+```bash
+pnpm make-area --name "Mombasa" --lat -4.0435 --lon 39.6682 --radius 20 --maxzoom 13 --source /path/to/your-area.pmtiles
+```
+
+Those files are much larger than the default ones, so a zoom-13 or zoom-14
+build also needs `--yes`, and it prints pmtiles' own dry run first so the
+estimated size is in front of you before the full extract is written. The default
+(`--maxzoom 11`) is unchanged and never asks. `--maxzoom` works with
+`--builtin` too, and that detailed archive is recorded as a `basemaps` entry,
+so it replaces the shipped map for that area. The shipped maps stay detailed to
+about 5 nm; closer zooms still work without a detailed extract, they just look
+coarser. Everything `make-area` writes stays on your computer: the extract goes
+to `apps/display/public/tiles`, which git ignores (only the Dover map ships with
+the repository), alongside the ignored `areas.local.json`.
+
 Town names are not inferred from the archive. To draw them, add place entries
 by hand to the area's `places` array, for example:
 
@@ -174,10 +192,15 @@ by hand to the area's `places` array, for example:
 
 ### Zoom
 
-Press `=` or `+` to zoom in, `-` to zoom out, and `0` to reset. The built-in
-areas step through 20, 10 and 5 nm. Ctrl, Alt and Cmd combinations are ignored
-so the browser's own zoom still works. Add `?tune=1` for the tuning keys and
-the radius status line.
+Press `=` or `+` to zoom in, `-` to zoom out, and the mouse wheel zooms one
+step per swipe. The built-in areas step through 20, 10, 5, 2 and 1 nm. The
+arrow keys move the view — up, down, left and right pan the centre that way on
+screen — and the view is limited to the area the live feed covers, so panning
+cannot pull an empty edge into view. `0` resets both the zoom and the view,
+back to the area's own centre. Ctrl, Alt and Cmd combinations are ignored so
+the browser's own zoom still works. Add `?tune=1` for the tuning keys and the
+view status line, which reads e.g. `View 5nm N+1.2 E-0.4`: the current radius
+and how far the centre has been moved from the area's centre.
 
 ## What you will see
 
