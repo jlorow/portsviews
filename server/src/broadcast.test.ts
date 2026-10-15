@@ -136,6 +136,7 @@ function freshCtx(): PipelineContext {
       lon: 1.71243,
       cogDeg: 43,
       sogKn: 8.8,
+      headingDeg: 44,
       timestamp: CAPTURED_POSITION_538006603_TS,
     },
     shipName: 'GLOBE TRINCO',
@@ -161,7 +162,7 @@ function freshCtx(): PipelineContext {
   assert(client.sent.length === 1, 'snapshot-after-N: exactly one message sent to the connecting client')
 
   interface SnapshotVessel {
-    fix: { mmsi: string }
+    fix: { mmsi: string; headingDeg?: number }
     shipName?: string
     vesselType?: string
   }
@@ -178,6 +179,10 @@ function freshCtx(): PipelineContext {
   assert(
     byMmsi.get('538006603')?.shipName === 'GLOBE TRINCO' && byMmsi.get('538006603')?.vesselType === 'cargo',
     'snapshot-after-N: 538006603 has its static fields merged into the snapshot',
+  )
+  assert(
+    byMmsi.get('356219000')?.fix.headingDeg === 45 && byMmsi.get('538006603')?.fix.headingDeg === 44,
+    'snapshot-after-N: normalized TrueHeading survives in both snapshot fixes',
   )
 }
 

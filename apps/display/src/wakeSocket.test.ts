@@ -173,11 +173,40 @@ function lastPendingCall(calls: ScheduledCall[]): ScheduledCall {
   const state: VesselStateMap = new Map()
   handleIncomingData(
     state,
-    JSON.stringify({ kind: 'position', fix: { mmsi: '666666666', lat: 5, lon: 5, cogDeg: 0, sogKn: 1, timestamp: 700 } }),
+    JSON.stringify({ kind: 'position', fix: { mmsi: '666666666', lat: 5, lon: 5, cogDeg: 0, sogKn: 1, headingDeg: 217, timestamp: 700 } }),
   )
   const entry = state.get('666666666')
   assert(entry?.fix?.mmsi === '666666666', 'position-for-unknown: entry created with the fix')
+  assert(entry?.fix?.headingDeg === 217, 'position-for-unknown: reported heading preserved on the fix')
   assert(entry?.shipName === undefined, 'position-for-unknown: no static data yet')
+}
+
+// A later position fix replaces the full fix, including removing a heading
+// that is absent from the new report; it must not preserve a stale heading.
+{
+  const state: VesselStateMap = new Map()
+  const fixes: Array<{ headingDeg?: number }> = []
+  handleIncomingData(
+    state,
+    JSON.stringify({ kind: 'position', fix: { mmsi: 'HEAD00001', lat: 5, lon: 5, cogDeg: 0, sogKn: 0, headingDeg: 217, timestamp: 700 } }),
+    (fix) => fixes.push(fix),
+  )
+  assert(state.get('HEAD00001')?.fix?.headingDeg === 217, 'heading-replace: heading kept on initial position and callback fix')
+  handleIncomingData(
+    state,
+    JSON.stringify({ kind: 'position', fix: { mmsi: 'HEAD00001', lat: 5, lon: 5, cogDeg: 0, sogKn: 0, timestamp: 800 } }),
+    (fix) => fixes.push(fix),
+  )
+  const latestFix = state.get('HEAD00001')?.fix
+  assert(
+    latestFix !== undefined && !Object.prototype.hasOwnProperty.call(latestFix, 'headingDeg'),
+    'heading-replace: later fix without heading replaces rather than retains the old heading',
+  )
+  assert(
+    fixes.length === 2 && fixes[0]?.headingDeg === 217 &&
+      !Object.prototype.hasOwnProperty.call(fixes[1], 'headingDeg'),
+    'heading-replace: applyPositionMessage passes each complete fix through applyFix callback',
+  )
 }
 
 // Scenario 6: close triggers reconnect with backoff matching

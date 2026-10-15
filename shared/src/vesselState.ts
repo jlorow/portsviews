@@ -7,6 +7,7 @@ export interface VesselFix {
   lon: number
   cogDeg: number      // course over ground, 0=N 90=E 180=S 270=W
   sogKn: number       // speed over ground in knots
+  headingDeg?: number // ship's reported true heading, 0-359; absent when unavailable
   timestamp: number   // Unix ms when this fix was received
 }
 

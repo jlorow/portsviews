@@ -82,14 +82,19 @@ function normalizePosition(
   const inner = isRecord(message) ? message[messageType] : undefined
   const rawSog = isRecord(inner) ? inner.Sog : undefined
   const rawCog = isRecord(inner) ? inner.Cog : undefined
+  const rawHeading = isRecord(inner) ? inner.TrueHeading : undefined
 
   const sogValid = typeof rawSog === 'number' && Number.isFinite(rawSog) && rawSog !== SOG_SENTINEL
   const cogValid = typeof rawCog === 'number' && Number.isFinite(rawCog) && rawCog !== COG_SENTINEL
+  const headingDeg =
+    typeof rawHeading === 'number' && Number.isFinite(rawHeading) && rawHeading >= 0 && rawHeading <= 359
+      ? rawHeading
+      : undefined
 
   const sogKn = sogValid && cogValid ? (rawSog as number) : 0
   const cogDeg = sogValid && cogValid ? (rawCog as number) : 0
 
-  const fix: VesselFix = { mmsi, lat, lon, cogDeg, sogKn, timestamp }
+  const fix: VesselFix = { mmsi, lat, lon, cogDeg, sogKn, ...(headingDeg === undefined ? {} : { headingDeg }), timestamp }
   const shipName = cleanShipName(metaData.ShipName)
   return { kind: 'position', fix, shipName }
 }

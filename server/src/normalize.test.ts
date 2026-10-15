@@ -243,6 +243,53 @@ const CAPTURED_SUBSCRIPTION_CONFIRMATION = JSON.parse(`
   )
 }
 
+// TrueHeading is present on both subscribed position message types. Keep
+// only finite values in the AIS true-heading range; unavailable and invalid
+// values must leave the optional fix property absent.
+{
+  const messageTypes = ['PositionReport', 'StandardClassBPositionReport'] as const
+  const validHeadings = [0, 217, 359]
+  const invalidHeadings: unknown[] = [511, 360, -1, Number.NaN, '217', undefined]
+
+  for (const messageType of messageTypes) {
+    for (const headingDeg of validHeadings) {
+      const result = normalize({
+        MetaData: {
+          MMSI_String: '123456789',
+          latitude: 51,
+          longitude: 1,
+          time_utc: '2026-09-14 22:21:32.409064434 +0000 UTC',
+        },
+        MessageType: messageType,
+        Message: { [messageType]: { Sog: 0, Cog: 0, ...(headingDeg === undefined ? {} : { TrueHeading: headingDeg }) } },
+      })
+      assert(
+        result?.kind === 'position' && result.fix.headingDeg === headingDeg,
+        `${messageType}: valid TrueHeading ${headingDeg} kept`,
+      )
+    }
+
+    for (const headingDeg of invalidHeadings) {
+      const inner = headingDeg === undefined ? { Sog: 0, Cog: 0 } : { Sog: 0, Cog: 0, TrueHeading: headingDeg }
+      const result = normalize({
+        MetaData: {
+          MMSI_String: '123456789',
+          latitude: 51,
+          longitude: 1,
+          time_utc: '2026-09-14 22:21:32.409064434 +0000 UTC',
+        },
+        MessageType: messageType,
+        Message: { [messageType]: inner },
+      })
+      assert(
+        result?.kind === 'position' &&
+          !Object.prototype.hasOwnProperty.call(result.fix, 'headingDeg'),
+        `${messageType}: invalid/missing TrueHeading ${String(headingDeg)} leaves headingDeg absent`,
+      )
+    }
+  }
+}
+
 // Scenario 2: MMSI zero-padding
 {
   const result = normalize(CAPTURED_POSITION_SHORT_MMSI)
