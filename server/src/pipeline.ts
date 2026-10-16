@@ -9,10 +9,16 @@ import {
   evictStalePositions,
 } from './caches.ts'
 import { broadcastToClients, mergeStatic, type ClientSocket, type BroadcastMessage } from './broadcast.ts'
+import { appendTrackPoint, pruneTracks, type TrackMap } from './trackBuffer.ts'
 
 export interface PipelineContext {
   positionMap: PositionMap
   staticMap: StaticMap
+  // The route-history buffer (trackBuffer.ts). Required, not optional:
+  // every caller that holds a position map must also hold the tracks
+  // that go with it, so a vessel can never be evicted from one and left
+  // in the other.
+  trackMap: TrackMap
   clients: Set<ClientSocket>
   removeSec: number
 }
@@ -45,6 +51,11 @@ export function processEnvelope(
   rewriteFixTimestamp?: (fix: VesselFix, nowMs: number) => VesselFix,
 ): void {
   evictStalePositions(ctx.positionMap, nowMs, ctx.removeSec)
+  // Same instant, same rule: a vessel whose fix just aged out of the
+  // position map loses its history too. Done as a second call rather
+  // than folded into evictStalePositions so that function keeps its
+  // single-map signature and its own existing tests.
+  pruneTracks(ctx.trackMap, ctx.positionMap)
 
   let result: ReturnType<typeof normalize>
   try {
@@ -64,6 +75,7 @@ export function processEnvelope(
   if (result.kind === 'position') {
     const fix = rewriteFixTimestamp ? rewriteFixTimestamp(result.fix, nowMs) : result.fix
     upsertPosition(ctx.positionMap, fix)
+    appendTrackPoint(ctx.trackMap, fix)
     touchStaticOnActivity(ctx.staticMap, fix.mmsi)
     // VIS-7 audit finding (Correction-shaped): a position message's own
     // ShipName was being computed by normalize() and then dropped here --

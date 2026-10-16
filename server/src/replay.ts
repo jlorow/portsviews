@@ -7,6 +7,7 @@ import { registerShutdown } from './shutdown.ts'
 import { createPositionMap, createStaticMap } from './caches.ts'
 import { createBroadcastServer } from './broadcast.ts'
 import type { PipelineContext } from './pipeline.ts'
+import { createTrackMap } from './trackBuffer.ts'
 import { readCaptureFile, scheduleReplay } from './replayCore.ts'
 
 // This file must never import aisstream.ts, directly or transitively --
@@ -111,11 +112,17 @@ logBanner(records.length, malformedCount, (captureEndMs - captureStartMs) / 1000
 
 const positionMap = createPositionMap()
 const staticMap = createStaticMap()
-const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap)
+// Replay fills the route-history buffer through the very same pipeline
+// call the live path uses (scheduleReplay -> processEnvelope), so a
+// replayed snapshot carries tracks exactly as a live one does -- see
+// this story's report for the explicit answer to that question.
+const trackMap = createTrackMap()
+const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap, trackMap)
 
 const pipelineCtx: PipelineContext = {
   positionMap,
   staticMap,
+  trackMap,
   clients: broadcastServer.clients,
   removeSec: DEFAULT_CONFIG.removeSec,
 }

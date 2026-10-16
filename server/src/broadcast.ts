@@ -1,7 +1,8 @@
 import { WebSocketServer, type WebSocket } from 'ws'
-import type { VesselFix, VesselType } from '@wake/shared'
+import type { TrackPoint, VesselFix, VesselType } from '@wake/shared'
 import type { PositionMap, StaticMap } from './caches.ts'
 import { getStatic } from './caches.ts'
+import type { TrackMap } from './trackBuffer.ts'
 
 // Narrow interface a broadcast target must satisfy. A real `ws.WebSocket`
 // satisfies this structurally with no adapter, and a plain mock object
@@ -32,9 +33,26 @@ export interface StaticBroadcastMessage {
   dimensions?: { lengthM: number; beamM: number }
 }
 
+// Route history v1: one vessel entry's recent positions, as it travels on
+// the wire -- [latitude, longitude, timestamp in ms], oldest first, at
+// most MAX_TRACK_POINTS entries. Latitude and longitude are rounded to 5
+// decimals (about 1 m) so the snapshot stays small; the timestamp is the
+// full-precision ms value, because it is the identity the display uses to
+// tell whether its own live track is already newer than this one.
+export type TrackMessage = [number, number, number][]
+
+export interface SnapshotVesselMessage extends PositionBroadcastMessage {
+  // Absent for a vessel with no history yet (just discovered, or its
+  // track was pruned). A live position message NEVER carries this field --
+  // see PositionBroadcastMessage above, which this extends rather than
+  // duplicating, so the snapshot entry is still exactly a position message
+  // plus an optional extra.
+  track?: TrackMessage
+}
+
 export interface SnapshotMessage {
   kind: 'snapshot'
-  vessels: PositionBroadcastMessage[]
+  vessels: SnapshotVesselMessage[]
 }
 
 export type BroadcastMessage = PositionBroadcastMessage | StaticBroadcastMessage | SnapshotMessage
@@ -51,10 +69,37 @@ export function mergeStatic(fix: VesselFix, staticMap: StaticMap): PositionBroad
   }
 }
 
-export function buildSnapshot(positionMap: PositionMap, staticMap: StaticMap): SnapshotMessage {
-  const vessels: PositionBroadcastMessage[] = []
+const TRACK_ROUNDING_DECIMALS = 5
+
+function roundCoordinate(value: number): number {
+  return Number(value.toFixed(TRACK_ROUNDING_DECIMALS))
+}
+
+function toTrackMessage(points: TrackPoint[] | undefined): TrackMessage | undefined {
+  if (points === undefined || points.length === 0) return undefined
+  return points.map((point) => [
+    roundCoordinate(point.lat),
+    roundCoordinate(point.lon),
+    point.timestamp,
+  ])
+}
+
+/**
+ * The whole current state in one message. trackMap is optional and
+ * defaults to empty, so every existing caller -- and every existing test
+ * that builds a snapshot from two maps -- keeps working unchanged and
+ * simply sends no tracks, exactly as before route history existed.
+ */
+export function buildSnapshot(
+  positionMap: PositionMap,
+  staticMap: StaticMap,
+  trackMap: TrackMap = new Map(),
+): SnapshotMessage {
+  const vessels: SnapshotVesselMessage[] = []
   for (const fix of positionMap.values()) {
-    vessels.push(mergeStatic(fix, staticMap))
+    const vessel = mergeStatic(fix, staticMap)
+    const track = toTrackMessage(trackMap.get(fix.mmsi))
+    vessels.push(track === undefined ? vessel : { ...vessel, track })
   }
   return { kind: 'snapshot', vessels }
 }
@@ -110,8 +155,9 @@ export function sendSnapshot(
   client: ClientSocket,
   positionMap: PositionMap,
   staticMap: StaticMap,
+  trackMap?: TrackMap,
 ): void {
-  const payload = JSON.stringify(buildSnapshot(positionMap, staticMap))
+  const payload = JSON.stringify(buildSnapshot(positionMap, staticMap, trackMap))
   trySend(clients, client, payload)
 }
 
@@ -129,13 +175,14 @@ export function createBroadcastServer(
   port: number,
   positionMap: PositionMap,
   staticMap: StaticMap,
+  trackMap?: TrackMap,
 ): BroadcastServerHandle {
   const clients: Set<ClientSocket> = new Set()
   const wss = new WebSocketServer({ port })
 
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws)
-    sendSnapshot(clients, ws, positionMap, staticMap)
+    sendSnapshot(clients, ws, positionMap, staticMap, trackMap)
 
     ws.on('close', () => {
       clients.delete(ws)

@@ -1,5 +1,5 @@
-import type { VesselFix, VesselType } from '@wake/shared'
-import { isExpired } from '@wake/shared'
+import type { TrackPoint, VesselFix, VesselType } from '@wake/shared'
+import { isExpired, MAX_TRACK_POINTS } from '@wake/shared'
 
 // Same values as server/src/aisstream.ts -- duplicated, not imported.
 // That file pulls in the Node-only `ws` package, and apps/display has no
@@ -59,9 +59,18 @@ interface StaticBroadcastMessage {
   vesselType: VesselType
   dimensions?: { lengthM: number; beamM: number }
 }
+// Route history v1: a snapshot vessel is a position message plus the
+// server's recent positions for it, [latitude, longitude, timestamp in
+// ms], oldest first. Mirrored from server/src/broadcast.ts's
+// SnapshotVesselMessage/TrackMessage. Kept on its own interface rather
+// than on PositionBroadcastMessage, because a LIVE position message never
+// carries this field and the type should say so.
+interface SnapshotVesselMessage extends PositionBroadcastMessage {
+  track?: unknown
+}
 interface SnapshotMessage {
   kind: 'snapshot'
-  vessels: PositionBroadcastMessage[]
+  vessels: SnapshotVesselMessage[]
 }
 type IncomingMessage = PositionBroadcastMessage | StaticBroadcastMessage | SnapshotMessage
 
@@ -92,16 +101,64 @@ function mergeVesselFields(
 export function applyPositionMessage(
   state: VesselStateMap,
   msg: PositionBroadcastMessage,
-  onFix?: (fix: VesselFix) => void,
+  onFix?: (fix: VesselFix, track?: TrackPoint[]) => void,
+  // Only ever supplied by applySnapshot below. A live delta passes
+  // nothing, so track is undefined for every position message that did
+  // not come out of a connect snapshot.
+  track?: TrackPoint[],
 ): void {
   const existing = state.get(msg.fix.mmsi)
   state.set(msg.fix.mmsi, mergeVesselFields(existing, msg, msg.fix))
-  onFix?.(msg.fix)
+  onFix?.(msg.fix, track)
 }
 
 export function applyStaticMessage(state: VesselStateMap, msg: StaticBroadcastMessage): void {
   const existing = state.get(msg.mmsi)
   state.set(msg.mmsi, mergeVesselFields(existing, msg, undefined))
+}
+
+const MIN_LATITUDE_DEG = -90
+const MAX_LATITUDE_DEG = 90
+const MIN_LONGITUDE_DEG = -180
+const MAX_LONGITUDE_DEG = 180
+
+/**
+ * Validates one snapshot vessel's track off the wire, returning undefined
+ * for anything untrustworthy -- an absent field, a non-array, an entry
+ * that is not exactly three finite numbers in range, or a timestamp that
+ * is not strictly later than the entry before it. Route history v1's
+ * decision: one bad entry invalidates the WHOLE track rather than being
+ * skipped, because a trail with a hole in the middle silently claims the
+ * ship went straight across a leg it did not travel. A rejected track
+ * leaves the vessel behaving exactly as it did before this story: its own
+ * fixes build its own trail from the next message on.
+ *
+ * The last MAX_TRACK_POINTS entries are kept, matching the server's own
+ * cap, so a server that ever exceeded it cannot grow this client's
+ * memory past the same bound.
+ */
+export function parseTrack(
+  raw: unknown,
+  maxPoints: number = MAX_TRACK_POINTS,
+): TrackPoint[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined
+
+  const points: TrackPoint[] = []
+  let previousTimestamp: number | undefined
+
+  for (const entry of raw) {
+    if (!Array.isArray(entry) || entry.length !== 3) return undefined
+    const [lat, lon, timestamp] = entry as unknown[]
+    if (typeof lat !== 'number' || typeof lon !== 'number' || typeof timestamp !== 'number') return undefined
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || !Number.isFinite(timestamp)) return undefined
+    if (lat < MIN_LATITUDE_DEG || lat > MAX_LATITUDE_DEG) return undefined
+    if (lon < MIN_LONGITUDE_DEG || lon > MAX_LONGITUDE_DEG) return undefined
+    if (previousTimestamp !== undefined && timestamp <= previousTimestamp) return undefined
+    previousTimestamp = timestamp
+    points.push({ lat, lon, timestamp })
+  }
+
+  return points.length > maxPoints ? points.slice(points.length - maxPoints) : points
 }
 
 /**
@@ -111,14 +168,17 @@ export function applyStaticMessage(state: VesselStateMap, msg: StaticBroadcastMe
  * vessel is decided later, independently, by pruneExpiredVessels against
  * its own last-known fix -- exactly as if the server had simply stopped
  * hearing from it, not as a special reconnect case.
+ *
+ * Route history v1: a vessel's track is validated here, at the one place
+ * it can arrive from, and handed to onFix beside the fix it belongs to.
  */
 export function applySnapshot(
   state: VesselStateMap,
   msg: SnapshotMessage,
-  onFix?: (fix: VesselFix) => void,
+  onFix?: (fix: VesselFix, track?: TrackPoint[]) => void,
 ): void {
   for (const vessel of msg.vessels) {
-    applyPositionMessage(state, vessel, onFix)
+    applyPositionMessage(state, vessel, onFix, parseTrack(vessel.track))
   }
 }
 
@@ -141,7 +201,7 @@ export function pruneExpiredVessels(state: VesselStateMap, nowMs: number, remove
 export function handleIncomingData(
   state: VesselStateMap,
   data: string,
-  onFix?: (fix: VesselFix) => void,
+  onFix?: (fix: VesselFix, track?: TrackPoint[]) => void,
 ): void {
   let parsed: unknown
   try {
@@ -178,7 +238,10 @@ export interface WakeConnectionHandlers {
   // only costs one redundant, bounded applyFix call, not correctness.
   // The point this exists to solve is "never fires on a frame with no
   // new fix" (S1.8 wires this to applyFix), not fix-content dedup.
-  onFix?: (fix: VesselFix) => void
+  // Route history v1 adds the second parameter: the server's recent
+  // positions for that vessel when the fix came inside a connect
+  // snapshot, undefined for every live delta.
+  onFix?: (fix: VesselFix, track?: TrackPoint[]) => void
 }
 
 /**

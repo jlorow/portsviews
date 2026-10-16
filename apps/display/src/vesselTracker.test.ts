@@ -1,10 +1,11 @@
 import './canvas/path2dShim'
 import type { VesselFix, VesselState, VesselType, TrackPoint, DisplayConfig } from '@wake/shared'
-import { DEFAULT_CONFIG, GLYPH_SCALES, LABEL_SIZES, UNKNOWN_SCALES, SWEEP_PERIODS, nextGlyphScale, screenHeadingDeg, STOPPED_COLOR, VESSEL_COLORS } from '@wake/shared'
+import { DEFAULT_CONFIG, GLYPH_SCALES, LABEL_SIZES, UNKNOWN_SCALES, SWEEP_PERIODS, nextGlyphScale, screenHeadingDeg, STOPPED_COLOR, VESSEL_COLORS, MAX_TRACK_POINTS } from '@wake/shared'
 import type { ClientVesselEntry } from './wakeSocket'
 import {
   createTrackedVesselMap,
   onFixArrived,
+  seedTrack,
   renderFrame,
   isStoppedForGlyph,
   STOPPED_MAX_SOG_KN,
@@ -907,6 +908,162 @@ function parseArcCalls(calls: string[]): { x: number; y: number; r: number }[] {
     config: { ...DEFAULT_CONFIG, legendEnabled: false, sweepPeriodSec: 0, rangeRingsEnabled: false, areaTitleEnabled: false },
   }))
   assert(ctxOff._fillTextCount() === 0, `area-title: disabled draws 0 fillText calls (got ${ctxOff._fillTextCount()})`)
+}
+
+// Scenarios (route history v1): a fix that arrives inside a connect
+// snapshot carries the server's recent positions, and onFixArrived seeds
+// the vessel's whole trail from them instead of starting at one point.
+{
+  const tracked = createTrackedVesselMap()
+  const mmsi = 'SEEDEDVSL1'
+  const history: TrackPoint[] = [
+    { lat: 51.0, lon: 1.45, timestamp: 1_789_424_480_000 },
+    { lat: 51.01, lon: 1.45, timestamp: 1_789_424_485_000 },
+    { lat: 51.02, lon: 1.45, timestamp: 1_789_424_490_000 },
+  ]
+  // The server's own last point IS this fix, as it always is for a
+  // vessel whose history was built by appendTrackPoint.
+  const currentFix = fix(mmsi, 51.02, 1.45, 1_789_424_490_000, 12, 0)
+
+  onFixArrived(tracked, currentFix, history)
+  const state = tracked.get(mmsi)
+
+  assert(
+    JSON.stringify(state?.track) === JSON.stringify(history),
+    `seed: the trail is exactly the history, capped by nothing and ending on the current fix once (got ${JSON.stringify(state?.track)})`,
+  )
+  assert(state?.track.length === history.length, `seed: trail length equals the number of history points (got ${state?.track.length})`)
+  assert(state?.lastFix === currentFix, 'seed: the current fix is still the vessel\'s lastFix')
+  assert(state?.displayLat === currentFix.lat && state?.displayLon === currentFix.lon, 'seed: a newly seen vessel snaps to the fix, exactly as applyFix does')
+
+  // History that does NOT already contain the current fix: the fix is
+  // appended, so the trail still ends on it -- exactly once.
+  const tracked2 = createTrackedVesselMap()
+  const history2 = history.slice(0, 2)
+  onFixArrived(tracked2, currentFix, history2)
+  const state2 = tracked2.get(mmsi)
+  const last2 = state2?.track[state2.track.length - 1]
+  assert(
+    state2?.track.length === 3 && last2?.timestamp === currentFix.timestamp && last2.lat === currentFix.lat && last2.lon === currentFix.lon,
+    `seed: a history that does not already end on the fix gets it appended exactly once (got ${JSON.stringify(state2?.track)})`,
+  )
+}
+
+// Scenario (route history v1): a live fix after the seeded snapshot
+// appends exactly one point -- the normal applyFix path, continuing the
+// seeded trail rather than replacing it.
+{
+  const tracked = createTrackedVesselMap()
+  const mmsi = 'SEEDEDVSL2'
+  const history: TrackPoint[] = [
+    { lat: 51.0, lon: 1.45, timestamp: 1000 },
+    { lat: 51.01, lon: 1.45, timestamp: 2000 },
+  ]
+  onFixArrived(tracked, fix(mmsi, 51.01, 1.45, 2000, 12, 0), history)
+  assert(tracked.get(mmsi)?.track.length === 2, 'seed-then-live: seeded length is 2')
+
+  onFixArrived(tracked, fix(mmsi, 51.02, 1.45, 3000, 12, 0))
+  const track = tracked.get(mmsi)?.track ?? []
+  assert(
+    track.length === 3 && track[2]?.timestamp === 3000 && track[2]?.lat === 51.02,
+    `seed-then-live: one live fix appends exactly one point (got ${JSON.stringify(track)})`,
+  )
+}
+
+// Scenario (route history v1): a 130-point history is capped at
+// MAX_TRACK_POINTS, dropping the oldest first -- the client applies the
+// same bound the server does, so neither end can grow past it.
+{
+  const tracked = createTrackedVesselMap()
+  const mmsi = 'SEEDEDCAPPED'
+  const history: TrackPoint[] = []
+  for (let i = 0; i < 130; i++) history.push({ lat: 51.0 + i * 0.0005, lon: 1.45, timestamp: i * 1000 })
+  const last = history[history.length - 1] as TrackPoint
+
+  onFixArrived(tracked, fix(mmsi, last.lat, last.lon, last.timestamp, 12, 0), history)
+  const track = tracked.get(mmsi)?.track ?? []
+  assert(
+    track.length === MAX_TRACK_POINTS,
+    `seed-cap: a 130-point history seeds exactly MAX_TRACK_POINTS (${MAX_TRACK_POINTS}) points (got ${track.length})`,
+  )
+  assert(
+    track[0]?.timestamp === history[10]?.timestamp && track[track.length - 1]?.timestamp === last.timestamp,
+    `seed-cap: the ten oldest points are the ones dropped (first ts ${track[0]?.timestamp}, expected ${history[10]?.timestamp})`,
+  )
+  const sameAsServer = seedTrack(history, fix(mmsi, last.lat, last.lon, last.timestamp, 12, 0))
+  assert(
+    JSON.stringify(sameAsServer) === JSON.stringify(track),
+    'seed-cap: seedTrack is the whole rule, so its own return value matches what onFixArrived stored',
+  )
+}
+
+// Scenario (route history v1): a snapshot whose history is older than the
+// track this display already holds never overwrites it. The fix itself
+// still arrives through the ordinary applyFix path.
+{
+  const tracked = createTrackedVesselMap()
+  const mmsi = 'SEEDEDOWNTRK'
+  onFixArrived(tracked, fix(mmsi, 51.0, 1.45, 19_000, 12, 0))
+  onFixArrived(tracked, fix(mmsi, 51.01, 1.45, 20_000, 12, 0))
+  assert(tracked.get(mmsi)?.track.length === 2, 'own-track: two live points before the snapshot')
+
+  const staleHistory: TrackPoint[] = [
+    { lat: 50.0, lon: 1.0, timestamp: 10_000 },
+    { lat: 50.01, lon: 1.0, timestamp: 11_000 },
+  ]
+  onFixArrived(tracked, fix(mmsi, 51.02, 1.45, 21_000, 12, 0), staleHistory)
+
+  const timestamps = (tracked.get(mmsi)?.track ?? []).map((p) => p.timestamp)
+  assert(
+    JSON.stringify(timestamps) === JSON.stringify([19_000, 20_000, 21_000]),
+    `own-track: the display keeps its own newer trail, untouched by the older snapshot history (got ${JSON.stringify(timestamps)})`,
+  )
+}
+
+// Scenario (route history v1): no history at all behaves exactly as
+// before this story -- a first fix still starts a one-point trail.
+{
+  const tracked = createTrackedVesselMap()
+  onFixArrived(tracked, fix('SEEDEDNONE1', IN_VIEW_LAT, IN_VIEW_LON, 1000))
+  assert(
+    JSON.stringify(tracked.get('SEEDEDNONE1')?.track) ===
+      JSON.stringify([{ lat: IN_VIEW_LAT, lon: IN_VIEW_LON, timestamp: 1000 }]),
+    'no-history: with no track argument a first fix still starts a one-point trail, exactly as before this story',
+  )
+
+  onFixArrived(tracked, fix('SEEDEDNONE1', IN_VIEW_LAT, IN_VIEW_LON + 0.01, 2000))
+  assert(
+    tracked.get('SEEDEDNONE1')?.track.length === 2,
+    'no-history: and a second live fix still appends one point',
+  )
+}
+
+// Scenario (route history v1): a seeded 100-point trail draws 99 trail
+// segments through the existing renderFrame path -- the seeded track is
+// drawn by exactly the same code as a track built from live fixes, with
+// no special case. trailLength 'long' allows all 100 points (see
+// trails.ts's short/medium/long = 20/60/120).
+{
+  const tracked = createTrackedVesselMap()
+  const clientState = new Map<string, ClientVesselEntry>()
+  const mmsi = 'SEEDEDRENDER'
+  const history: TrackPoint[] = []
+  for (let i = 0; i < 100; i++) history.push({ lat: 51.0 + i * 0.001, lon: 1.45, timestamp: 1_000 + i * 1000 })
+  const last = history[history.length - 1] as TrackPoint
+
+  // No clientState entry -> vesselType 'unknown' -> never hero-eligible,
+  // so config.trailLength is what decides how many points are drawn.
+  onFixArrived(tracked, fix(mmsi, last.lat, last.lon, last.timestamp, 12, 0), history)
+
+  const ctx = createMockCtx()
+  renderFrame(tracked, clientState, ctx, baseRenderContext({
+    nowMs: last.timestamp,
+    config: { ...DEFAULT_CONFIG, legendEnabled: false, sweepPeriodSec: 0, rangeRingsEnabled: false, trailLength: 'long' },
+  }))
+  assert(
+    ctx._trailStrokeCount() === 99,
+    `seeded-render: a seeded 100-point trail draws 99 segments (got ${ctx._trailStrokeCount()})`,
+  )
 }
 
 // Scenario: VIS-7 hero trails -- a hero always draws trailLength 'long'
