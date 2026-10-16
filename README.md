@@ -8,7 +8,7 @@ any screen or projector you already own.
 It is free and open source. There is no account, no subscription and nothing to
 pay. You need one free API key and about ten minutes.
 
-![Portsviews showing cargo ships, tankers and ferries crossing the Dover Strait, each drawn with its heading and wake, the largest labelled with name, type and speed](assets/hero-dover.png)
+![Portsviews showing ships in the Dover Strait over a dark coastline map: moving ships in their type colours with a wake behind each, stopped ships in yellow-green, and the largest ships named.](assets/hero-dover.png)
 
 *A real frame from the display. The image is mirrored left-to-right, because the
 display is designed to be bounced off a mirror onto a ceiling.*
