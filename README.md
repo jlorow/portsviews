@@ -193,14 +193,16 @@ by hand to the area's `places` array, for example:
 ### Zoom
 
 Press `=` or `+` to zoom in, `-` to zoom out, and the mouse wheel zooms one
-step per swipe. The built-in areas step through 20, 10, 5, 2 and 1 nm. The
-arrow keys move the view — up, down, left and right pan the centre that way on
-screen — and the view is limited to the area the live feed covers, so panning
-cannot pull an empty edge into view. `0` resets both the zoom and the view,
-back to the area's own centre. Ctrl, Alt and Cmd combinations are ignored so
-the browser's own zoom still works. Add `?tune=1` for the tuning keys and the
-view status line, which reads e.g. `View 5nm N+1.2 E-0.4`: the current radius
-and how far the centre has been moved from the area's centre.
+step per swipe around the pointer. Click and drag to pan — touch drag works
+too. The built-in areas step through 20, 10, 5, 2 and 1 nm. The arrow keys
+move the view — up, down, left and right pan the centre that way on screen —
+and Shift plus an arrow key pans five times as far. The view is limited to the
+area the live feed covers, so panning cannot pull an empty edge into view. `0`
+resets both the zoom and the view, back to the area's own centre. Ctrl, Alt and
+Cmd combinations are ignored so the browser's own zoom still works. Pinch zoom
+is not supported yet. Add `?tune=1` for the tuning keys and the view status
+line, which reads e.g. `View 5nm N+1.2 E-0.4`: the current radius and how far
+the centre has been moved from the area's centre.
 
 ## What you will see
 
