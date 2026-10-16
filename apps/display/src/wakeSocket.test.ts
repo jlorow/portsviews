@@ -346,6 +346,124 @@ function lastPendingCall(calls: ScheduledCall[]): ScheduledCall {
   assert(state.size === 0, 'no discriminant at all: no mutation')
 }
 
+// Scenario 13 (route history v1): a snapshot vessel carrying a track
+// hands the validated points to onFix, oldest first, alongside its fix.
+// A vessel with no track -- and every live position message -- hands
+// undefined, exactly as before this story.
+{
+  const state: VesselStateMap = new Map()
+  const seen: { mmsi: string; track: unknown }[] = []
+  const snapshot = {
+    kind: 'snapshot',
+    vessels: [
+      {
+        kind: 'position',
+        fix: { mmsi: '410000001', lat: 51.09419, lon: 1.76198, cogDeg: 44, sogKn: 13, timestamp: 1789424492409 },
+        track: [
+          [51.09419, 1.76198, 1789424482409],
+          [51.09419, 1.762, 1789424487409],
+          [51.09419, 1.76198, 1789424492409],
+        ],
+      },
+      {
+        kind: 'position',
+        fix: { mmsi: '410000002', lat: 51.1, lon: 1.4, cogDeg: 0, sogKn: 0, timestamp: 1789424492409 },
+      },
+    ],
+  }
+  handleIncomingData(state, JSON.stringify(snapshot), (fix, track) => seen.push({ mmsi: fix.mmsi, track }))
+
+  assert(seen.length === 2 && state.size === 2, 'snapshot-track: both vessels applied and reported')
+  assert(
+    JSON.stringify(seen[0]?.track) ===
+      JSON.stringify([
+        { lat: 51.09419, lon: 1.76198, timestamp: 1789424482409 },
+        { lat: 51.09419, lon: 1.762, timestamp: 1789424487409 },
+        { lat: 51.09419, lon: 1.76198, timestamp: 1789424492409 },
+      ]),
+    `snapshot-track: the valid track reaches onFix as TrackPoint[] in wire order (got ${JSON.stringify(seen[0]?.track)})`,
+  )
+  assert(seen[1]?.track === undefined, 'snapshot-track: a vessel with no track sends undefined, not an empty array')
+
+  handleIncomingData(
+    state,
+    JSON.stringify({ kind: 'position', fix: { mmsi: '410000001', lat: 51.095, lon: 1.762, cogDeg: 44, sogKn: 13, timestamp: 1789424493409 } }),
+    (fix, track) => seen.push({ mmsi: fix.mmsi, track }),
+  )
+  assert(seen[2]?.track === undefined, 'snapshot-track: a live position delta never carries a track')
+}
+
+// Scenario 14 (route history v1): a malformed track is rejected whole and
+// the vessel behaves exactly as today -- its fix still applies and its
+// trail still starts from its own next fix. Each entry below is one of
+// the shapes parseTrack must refuse: wrong arity, non-number, non-finite,
+// out-of-range latitude, out-of-range longitude, and a timestamp that
+// does not move forward.
+{
+  const malformed: [string, unknown][] = [
+    ['not an array', { lat: 51, lon: 1, timestamp: 1 }],
+    ['an entry of two numbers', [[51, 1]]],
+    ['a string coordinate', [['51.09419', 1.76198, 1789424482409]]],
+    ['a non-finite coordinate', [[Number.NaN, 1.76198, 1789424482409]]],
+    ['latitude above 90', [[91, 1.76198, 1789424482409]]],
+    ['longitude below -180', [[51, -181, 1789424482409]]],
+    ['a non-ascending timestamp', [[51, 1, 1789424492409], [51.1, 1.1, 1789424492409]]],
+    ['a NaN timestamp', [[51, 1, Number.NaN]]],
+  ]
+
+  for (const [label, track] of malformed) {
+    const state: VesselStateMap = new Map()
+    let reported: unknown = 'not called'
+    handleIncomingData(
+      state,
+      JSON.stringify({
+        kind: 'snapshot',
+        vessels: [
+          {
+            kind: 'position',
+            fix: { mmsi: '420000001', lat: 51.09419, lon: 1.76198, cogDeg: 44, sogKn: 13, timestamp: 1789424492409 },
+            track,
+          },
+        ],
+      }),
+      (_fix, validTrack) => { reported = validTrack },
+    )
+    assert(
+      reported === undefined && state.get('420000001')?.fix?.lat === 51.09419,
+      `malformed-track (${label}): the track is ignored and the vessel's fix still applies`,
+    )
+  }
+}
+
+// Scenario 15 (route history v1): a no-track snapshot behaves exactly as
+// before -- the same state and the same onFix calls a pre-story server
+// would have produced. This is the "an old server still works" check.
+{
+  const state: VesselStateMap = new Map()
+  const calls: unknown[] = []
+  handleIncomingData(
+    state,
+    JSON.stringify({
+      kind: 'snapshot',
+      vessels: [
+        {
+          kind: 'position',
+          fix: { mmsi: '430000001', lat: 51.09419, lon: 1.76198, cogDeg: 44, sogKn: 13, timestamp: 1789424492409 },
+          shipName: 'NO TRACK VESSEL',
+          vesselType: 'cargo',
+        },
+      ],
+    }),
+    (_fix, track) => calls.push(track),
+  )
+  assert(calls.length === 1 && calls[0] === undefined, 'no-track snapshot: one onFix call, with no track')
+  assert(
+    state.get('430000001')?.shipName === 'NO TRACK VESSEL' && state.get('430000001')?.vesselType === 'cargo',
+    'no-track snapshot: static fields still merged exactly as before',
+  )
+  assert(state.size === 1, 'no-track snapshot: exactly one vessel in state')
+}
+
 const total = passed + failed
 if (failed === 0) {
   console.log(`\nAll ${total} tests passed`)

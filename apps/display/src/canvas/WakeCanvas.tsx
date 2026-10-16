@@ -168,7 +168,10 @@ export default function WakeCanvas() {
       undefined,
       {
         onStatusChange: setConnectionStatus,
-        onFix: (fix) => onFixArrived(trackedRef.current, fix),
+        // history is defined only for a fix that arrived inside the
+        // connect snapshot (route history v1), and seeds that vessel's
+        // trail so a reload shows full wakes immediately.
+        onFix: (fix, history) => onFixArrived(trackedRef.current, fix, history),
       },
     )
     connection.connect()

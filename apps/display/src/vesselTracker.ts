@@ -1,5 +1,5 @@
-import type { VesselFix, VesselState, VesselType, ProjectionConfig, DisplayConfig } from '@wake/shared'
-import { applyFix, updateVesselState, isExpired, vesselOpacity, mapProject, screenHeadingDeg, VESSEL_BASE_SIZES, VESSEL_COLORS, STOPPED_COLOR } from '@wake/shared'
+import type { TrackPoint, VesselFix, VesselState, VesselType, ProjectionConfig, DisplayConfig } from '@wake/shared'
+import { applyFix, updateVesselState, isExpired, vesselOpacity, mapProject, screenHeadingDeg, VESSEL_BASE_SIZES, VESSEL_COLORS, STOPPED_COLOR, MAX_TRACK_POINTS } from '@wake/shared'
 import type { ClientVesselEntry } from './wakeSocket'
 import { drawGlyph, drawDot, glyphActualSize } from './canvas/glyphs'
 import { drawTrail } from './canvas/trails'
@@ -53,14 +53,79 @@ export function createTrackedVesselMap(): TrackedVesselMap {
 }
 
 /**
+ * Builds a vessel's trail from the server's recent positions plus the fix
+ * that snapshot carried. Route history v1: history is already validated
+ * and ascending (wakeSocket.ts's parseTrack), so the only rules left are
+ * the two that make a SEEDED track indistinguishable from one this
+ * display built itself -- keep the last MAX_TRACK_POINTS points, and end
+ * on the current fix exactly once. The server may already have sent that
+ * fix as its last point ([round5(lat), round5(lon), timestamp]), so an
+ * equal timestamp replaces the tail instead of appending a duplicate of
+ * the same instant.
+ */
+export function seedTrack(history: readonly TrackPoint[], fix: VesselFix): TrackPoint[] {
+  const points =
+    history.length > MAX_TRACK_POINTS ? history.slice(history.length - MAX_TRACK_POINTS) : [...history]
+  const fixPoint: TrackPoint = { lat: fix.lat, lon: fix.lon, timestamp: fix.timestamp }
+  const tail = points[points.length - 1]
+
+  if (tail === undefined) return [fixPoint]
+  if (tail.timestamp === fix.timestamp) {
+    points[points.length - 1] = fixPoint
+    return points
+  }
+  return [...points, fixPoint].slice(-MAX_TRACK_POINTS)
+}
+
+/**
+ * True when the snapshot's history reaches further than this display's
+ * own track for that vessel -- i.e. the snapshot is worth seeding from.
+ * A display that already holds a NEWER last point keeps its own track
+ * untouched: a reconnect snapshot must never overwrite a live trail with
+ * data the display has already moved past.
+ */
+function snapshotHistoryIsNewer(prev: VesselState | undefined, history: readonly TrackPoint[]): boolean {
+  if (prev === undefined) return true
+  const ownLast = prev.track[prev.track.length - 1]
+  const historyLast = history[history.length - 1]
+  if (ownLast === undefined || historyLast === undefined) return true
+  return historyLast.timestamp > ownLast.timestamp
+}
+
+/**
  * Wired to WakeConnectionHandlers.onFix -- fires once per genuinely new
  * fix (once per message actually processed), never once per frame. This
  * is the signed-off callback design, not polling: wakeSocket.ts already
  * knows the moment a fix lands, so it signals rather than making the
  * render loop diff state every frame to detect change.
+ *
+ * history is present only for a fix that arrived inside a connect
+ * snapshot (route history v1). Without it this is exactly the applyFix
+ * call it has always been, so a server that sends no tracks -- or a
+ * snapshot whose track was rejected as malformed -- behaves as before.
+ * With it, the vessel's trail starts already full instead of growing
+ * from a single point after a reload.
  */
-export function onFixArrived(tracked: TrackedVesselMap, fix: VesselFix): void {
+export function onFixArrived(
+  tracked: TrackedVesselMap,
+  fix: VesselFix,
+  history?: readonly TrackPoint[],
+): void {
   const prev = tracked.get(fix.mmsi)
+
+  if (history !== undefined && history.length > 0 && snapshotHistoryIsNewer(prev, history)) {
+    tracked.set(fix.mmsi, {
+      mmsi: fix.mmsi,
+      lastFix: fix,
+      // Same easing anchor applyFix uses: an unseen vessel snaps to the
+      // fix, a known one keeps gliding from where it was drawn.
+      displayLat: prev?.displayLat ?? fix.lat,
+      displayLon: prev?.displayLon ?? fix.lon,
+      track: seedTrack(history, fix),
+    })
+    return
+  }
+
   tracked.set(fix.mmsi, applyFix(prev, fix))
 }
 
