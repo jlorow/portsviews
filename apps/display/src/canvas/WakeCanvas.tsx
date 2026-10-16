@@ -2,15 +2,18 @@ import { useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_CONFIG,
   DEMO_AREAS,
+  PAN_FRACTION,
   clampPanToFeed,
   panCenter,
   panKeyAction,
+  panKeyMultiplier,
+  applyWheelAtPointer,
+  applyDrag,
   parseLocalAreas,
   radiusStepsFor,
   resolveArea,
   basemapFor,
   stepRadius,
-  wheelZoomAction,
   zoomKeyAction,
   type DemoAreaKey,
   type DisplayConfig,
@@ -138,6 +141,8 @@ export default function WakeCanvas() {
   // Wheel steps are rate-limited: the last step's time, in the same clock
   // wheelZoomAction is handed. 0 means "no step yet this session".
   const lastWheelStepMsRef = useRef(0)
+  const dragRef = useRef<{ x: number; y: number } | null>(null)
+  const isDraggingRef = useRef(false)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
 
   // VIS-6 tune mode: a runtime copy of DEFAULT_CONFIG the H/W/R/J keys
@@ -229,9 +234,9 @@ export default function WakeCanvas() {
       applyView()
     }
 
-    const panBy = (direction: PanDirection) => {
+    const panBy = (direction: PanDirection, multiplier: number = 1) => {
       const view = viewRef.current
-      const moved = panCenter(view.centerLat, view.centerLon, direction, view.radiusNm, PROJ_CONFIG)
+      const moved = panCenter(view.centerLat, view.centerLon, direction, view.radiusNm, PROJ_CONFIG, multiplier * PAN_FRACTION)
       const clamped = clampPanToFeed(moved.centerLat, moved.centerLon, view.radiusNm, FEED_BOX)
       viewRef.current = { ...view, centerLat: clamped.centerLat, centerLon: clamped.centerLon }
       applyView()
@@ -276,29 +281,104 @@ export default function WakeCanvas() {
       if (direction === null) return
 
       event.preventDefault()
-      panBy(direction)
+      const multiplier = panKeyMultiplier(event)
+      panBy(direction, multiplier)
     }
 
     // passive: false because a wheel step we act on must also be prevented
     // from scrolling the page. A step we ignore (Ctrl/Alt/Cmd, a sub-1
     // delta, or one inside the 300ms window) is never prevented.
     const handleWheel = (event: WheelEvent) => {
-      const step = wheelZoomAction(event, Date.now(), lastWheelStepMsRef.current)
-      if (step === null) return
-
+      const canvas = canvasRef.current
+      if (!canvas) return
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = canvas.width / rect.width
+      const scaleY = canvas.height / rect.height
+      const pointerX = (event.clientX - rect.left) * scaleX
+      const pointerY = (event.clientY - rect.top) * scaleY
+      const result = applyWheelAtPointer(
+        viewRef.current,
+        event,
+        Date.now(),
+        lastWheelStepMsRef.current,
+        radiusStepsFor(AREA_RADIUS_NM),
+        FEED_BOX,
+        PROJ_CONFIG,
+        canvas.width,
+        canvas.height,
+        pointerX,
+        pointerY,
+      )
+      if (result.view === viewRef.current) return
       event.preventDefault()
-      lastWheelStepMsRef.current = step.stepAtMs
-      zoomBy(step.action)
+      lastWheelStepMsRef.current = result.lastStepMs
+      viewRef.current = result.view
+      applyView()
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const canvas = canvasRef.current
+      if (!canvas) return
+      if (event.ctrlKey || event.metaKey || event.altKey) return
+      if (event.button !== 0 && event.pointerType !== 'touch') return
+      if (targetIsEditable(event.target)) return
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = canvas.width / rect.width
+      const scaleY = canvas.height / rect.height
+      dragRef.current = {
+        x: (event.clientX - rect.left) * scaleX,
+        y: (event.clientY - rect.top) * scaleY,
+      }
+      isDraggingRef.current = true
+      canvas.setPointerCapture(event.pointerId)
+      canvas.style.cursor = 'grabbing'
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const canvas = canvasRef.current
+      if (!canvas || !isDraggingRef.current || dragRef.current === null) return
+      const rect = canvas.getBoundingClientRect()
+      const scaleX = canvas.width / rect.width
+      const scaleY = canvas.height / rect.height
+      const to = {
+        x: (event.clientX - rect.left) * scaleX,
+        y: (event.clientY - rect.top) * scaleY,
+      }
+      const newView = applyDrag(viewRef.current, dragRef.current, to, FEED_BOX, PROJ_CONFIG, canvas.width, canvas.height)
+      viewRef.current = newView
+      dragRef.current = to
+      applyView()
+    }
+
+    const handlePointerUp = () => {
+      isDraggingRef.current = false
+      dragRef.current = null
+      const canvas = canvasRef.current
+      if (canvas) canvas.style.cursor = ''
     }
 
     globalThis.addEventListener('keydown', handleZoomKeyDown)
     globalThis.addEventListener('keydown', handlePanKeyDown)
-    globalThis.addEventListener('wheel', handleWheel, { passive: false })
+    const canvasEl = canvasRef.current
+    if (canvasEl) {
+      canvasEl.style.touchAction = 'none'
+      canvasEl.addEventListener('wheel', handleWheel, { passive: false })
+      canvasEl.addEventListener('pointerdown', handlePointerDown)
+      canvasEl.addEventListener('pointermove', handlePointerMove)
+      canvasEl.addEventListener('pointerup', handlePointerUp)
+      canvasEl.addEventListener('pointercancel', handlePointerUp)
+    }
 
     return () => {
       globalThis.removeEventListener('keydown', handleZoomKeyDown)
       globalThis.removeEventListener('keydown', handlePanKeyDown)
-      globalThis.removeEventListener('wheel', handleWheel)
+      if (canvasEl) {
+        canvasEl.removeEventListener('wheel', handleWheel)
+        canvasEl.removeEventListener('pointerdown', handlePointerDown)
+        canvasEl.removeEventListener('pointermove', handlePointerMove)
+        canvasEl.removeEventListener('pointerup', handlePointerUp)
+        canvasEl.removeEventListener('pointercancel', handlePointerUp)
+      }
     }
   }, [])
 
