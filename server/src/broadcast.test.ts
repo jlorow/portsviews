@@ -13,11 +13,13 @@ import { createTrackMap } from './trackBuffer.ts'
 import {
   broadcastToClients,
   sendSnapshot,
+  buildSnapshot,
   mergeStatic,
   BUFFERED_AMOUNT_LIMIT_BYTES,
   type ClientSocket,
   type BroadcastMessage,
 } from './broadcast.ts'
+import { MAX_TRACK_POINTS } from '@wake/shared'
 
 let passed = 0
 let failed = 0
@@ -395,6 +397,152 @@ function freshCtx(): PipelineContext {
       `full-capture replay: static map size at end of file, never evicted by removeSec (got ${ctx.staticMap.size})`,
     )
   }
+}
+
+// Scenario (route history v1): the snapshot carries each vessel's recent
+// positions. Fed through the real pipeline, so this is the buffer the
+// live server fills, not a hand-built one.
+{
+  const ctx = freshCtx()
+  const mock = new MockClient()
+  ctx.clients.add(mock)
+
+  // Three fixes, five seconds apart, each carrying a full-precision
+  // Longitude/Latitude (the capture's own 51.094190000000005 shape), so
+  // the 5-decimal rounding is exercised on a real value.
+  processEnvelope(CAPTURED_POSITION_356219000, ctx, CAPTURED_POSITION_356219000_TS)
+  const secondTs = CAPTURED_POSITION_356219000_TS + 5000
+  const secondEnvelope = JSON.parse(JSON.stringify(CAPTURED_POSITION_356219000))
+  // The fix's timestamp comes from MetaData.time_utc, not from the nowMs
+  // argument, so the envelope's own clock has to move for the buffer to
+  // see a second point at all.
+  secondEnvelope.MetaData.time_utc = '2026-09-14 22:21:37.409064434 +0000 UTC'
+  secondEnvelope.MetaData.latitude = 51.0941934567
+  secondEnvelope.MetaData.longitude = 1.7620012345
+  secondEnvelope.Message.PositionReport.Latitude = 51.0941934567
+  secondEnvelope.Message.PositionReport.Longitude = 1.7620012345
+  processEnvelope(secondEnvelope, ctx, secondTs)
+
+  const fix = ctx.positionMap.get('356219000')
+  const client = new MockClient()
+  sendSnapshot(ctx.clients, client, ctx.positionMap, ctx.staticMap, ctx.trackMap)
+
+  const snapshot: { vessels?: { fix: { mmsi: string; lat: number; lon: number; timestamp: number }; track?: number[][] }[] } =
+    JSON.parse(client.sent[0])
+  const vessel = snapshot.vessels?.find((v) => v.fix.mmsi === '356219000')
+  const track = vessel?.track
+
+  assert(track !== undefined && track.length === 2, `snapshot-track: two points sent for a vessel with two fixes (got ${JSON.stringify(track)})`)
+  assert(
+    JSON.stringify(track) === JSON.stringify([
+      [51.09419, 1.76198, CAPTURED_POSITION_356219000_TS],
+      [51.09419, 1.762, secondTs],
+    ]),
+    `snapshot-track: oldest first, latitude/longitude rounded to 5 decimals, timestamp untouched (got ${JSON.stringify(track)})`,
+  )
+  assert(
+    track !== undefined &&
+      fix !== undefined &&
+      track[track.length - 1][0] === Number(fix.lat.toFixed(5)) &&
+      track[track.length - 1][1] === Number(fix.lon.toFixed(5)) &&
+      track[track.length - 1][2] === fix.timestamp,
+    'snapshot-track: the last point equals the vessel\'s current fix',
+  )
+}
+
+// Scenario (route history v1): a vessel with no history yet carries no
+// track field at all, and the live position messages that follow never
+// carry one either. The old two-argument calls keep working unchanged.
+{
+  const ctx = freshCtx()
+  const mock = new MockClient()
+  ctx.clients.add(mock)
+
+  processEnvelope(CAPTURED_POSITION_538006603, ctx, CAPTURED_POSITION_538006603_TS)
+
+  interface SnapshotVesselShape {
+    fix: { mmsi: string }
+    track?: number[][]
+  }
+  const liveMessage = JSON.parse(mock.sent[0] ?? '{}') as { kind?: string; track?: unknown }
+  assert(
+    liveMessage.kind === 'position' && liveMessage.track === undefined && !(mock.sent[0] ?? '').includes('"track"'),
+    'live-no-track: a live position message never contains a track',
+  )
+
+  // Old two-argument call -- no trackMap argument at all.
+  const client = new MockClient()
+  sendSnapshot(ctx.clients, client, ctx.positionMap, ctx.staticMap)
+  const snapshot: { vessels?: SnapshotVesselShape[] } = JSON.parse(client.sent[0] ?? '{}')
+  assert(
+    snapshot.vessels?.length === 1 && snapshot.vessels[0]?.track === undefined,
+    'omit-no-history: the two-argument sendSnapshot still works and sends no track for a vessel whose history was dropped',
+  )
+
+  // A vessel with no track at all is omitted, not sent as [] -- here by
+  // passing an empty track map beside a position map that does hold the
+  // vessel (the "history was pruned but the fix is still fresh" shape).
+  const client2 = new MockClient()
+  sendSnapshot(ctx.clients, client2, ctx.positionMap, ctx.staticMap, createTrackMap())
+  const snapshot2: { vessels?: SnapshotVesselShape[] } = JSON.parse(client2.sent[0] ?? '{}')
+  assert(
+    snapshot2.vessels?.length === 1 && snapshot2.vessels[0]?.track === undefined,
+    'omit-no-history: a vessel with an empty track sends no track field (omitted, not an empty array)',
+  )
+  assert(
+    !(client2.sent[0] ?? '').includes('"track"'),
+    'omit-no-history: no track key appears anywhere in a snapshot where no vessel has history',
+  )
+
+  const buildOnly = buildSnapshot(ctx.positionMap, ctx.staticMap)
+  assert(
+    buildOnly.vessels.length === 1 && buildOnly.vessels[0]?.track === undefined,
+    'omit-no-history: buildSnapshot keeps its existing two-argument signature and sends no tracks',
+  )
+}
+
+// Scenario (route history v1): the snapshot size ceiling. 200 vessels with
+// a full 120-point track each -- the worst case the cap allows -- must
+// serialize under 1,500,000 bytes. The measured number is printed, not
+// just asserted, so a future change that doubles it is visible in the
+// output rather than only in a pass/fail.
+{
+  const positionMap = createPositionMap()
+  const staticMap = createStaticMap()
+  const trackMap = createTrackMap()
+  const baseTs = 1789424492409
+
+  for (let v = 0; v < 200; v++) {
+    const mmsi = String(200000000 + v)
+    const track = []
+    for (let p = 0; p < MAX_TRACK_POINTS; p++) {
+      // Realistic Dover coordinates and millisecond timestamps: five
+      // decimals of latitude/longitude and a 13-digit absolute ms value,
+      // which is what the wire actually carries.
+      const lat = 51.09419 + p * 0.00037
+      const lon = 1.76198 + p * 0.00041
+      track.push({ lat, lon, timestamp: baseTs + p * 1000 })
+    }
+    const last = track[track.length - 1]
+    if (last === undefined) throw new Error('test setup error: empty track')
+    trackMap.set(mmsi, track)
+    upsertStatic(staticMap, mmsi, { shipName: 'TEST VESSEL 200', vesselType: 'cargo' })
+    positionMap.set(mmsi, {
+      mmsi,
+      lat: last.lat,
+      lon: last.lon,
+      cogDeg: 90,
+      sogKn: 12,
+      timestamp: last.timestamp,
+    })
+  }
+
+  const bytes = JSON.stringify(buildSnapshot(positionMap, staticMap, trackMap)).length
+  console.log(`[Info] snapshot-size: 200 vessels x ${MAX_TRACK_POINTS} points serialize to ${bytes} bytes`)
+  assert(
+    bytes < 1_500_000,
+    `snapshot-size: 200 vessels with ${MAX_TRACK_POINTS} points each stay under 1,500,000 bytes (got ${bytes})`,
+  )
 }
 
 const total = passed + failed

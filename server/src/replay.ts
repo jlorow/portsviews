@@ -117,7 +117,7 @@ const staticMap = createStaticMap()
 // replayed snapshot carries tracks exactly as a live one does -- see
 // this story's report for the explicit answer to that question.
 const trackMap = createTrackMap()
-const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap)
+const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap, trackMap)
 
 const pipelineCtx: PipelineContext = {
   positionMap,
