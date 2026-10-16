@@ -259,7 +259,10 @@ broadcast, and position reports arrive every couple of minutes per ship.
   type.
 - Stopped ships that report no heading are drawn as dots.
 - Labels can overlap other ships.
-- There is no route history yet, and no phone control.
+- Trails survive a reload of the display for as long as the server keeps
+  running: the server remembers the last 120 positions of each ship, about two
+  hours at typical reporting rates. Restarting the server starts the history
+  again. There is no phone control.
 
 Bug reports, ideas and pull requests are welcome — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
