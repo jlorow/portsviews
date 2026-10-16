@@ -29,6 +29,31 @@ export interface ManagedSocket {
 
 let shuttingDown = false
 
+/**
+ * Set by registerShutdown, once this process's closables are known, so a
+ * module that has to leave early can go through the SAME graceful close
+ * instead of a bare process.exit() that would leave the AIS connection
+ * open. Stays null if nothing is registered yet -- then nothing would need
+ * closing anyway. First caller: broadcast.ts's port-in-use failure.
+ */
+let requestShutdownFn: ((signal: string, exitCode: number) => Promise<void>) | null = null
+
+/**
+ * Leave the process through the graceful shutdown path, with an explicit
+ * exit code (a signal-driven exit uses 0; a failed start passes 1). The
+ * close performed is the same one SIGINT runs -- AIS socket, capture
+ * logger and display clients -- because an unclean AIS exit is expensive
+ * here: the free key allows one connection and a ghost one does not clear
+ * for days.
+ */
+export function requestShutdown(signal: string, exitCode = 0): void {
+  if (!requestShutdownFn) {
+    process.exit(exitCode)
+    return
+  }
+  void requestShutdownFn(signal, exitCode)
+}
+
 // Exported (RISK-1) alongside closeSocket -- see its comment.
 export const CLOSE_TIMEOUT_MS = 5000
 
@@ -129,7 +154,7 @@ export function registerShutdown(
   captureLogger?: CaptureLogger,
   clientSockets?: Set<ClientSocket>,
 ): void {
-  const shutdown = async (signal: string): Promise<void> => {
+  const shutdown = async (signal: string, exitCode = 0): Promise<void> => {
     if (shuttingDown) return
     shuttingDown = true
 
@@ -144,8 +169,12 @@ export function registerShutdown(
 
     releaseLock()
 
-    process.exit(0)
+    process.exit(exitCode)
   }
+
+  // Published for requestShutdown, which is how a non-signal failure leaves
+  // through this same close rather than a bare exit.
+  requestShutdownFn = shutdown
 
   process.on('SIGINT', () => {
     void shutdown('SIGINT')

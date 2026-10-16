@@ -3,6 +3,7 @@ import type { TrackPoint, VesselFix, VesselType } from '@wake/shared'
 import type { PositionMap, StaticMap } from './caches.ts'
 import { getStatic } from './caches.ts'
 import type { TrackMap } from './trackBuffer.ts'
+import { requestShutdown } from './shutdown.ts'
 
 // Narrow interface a broadcast target must satisfy. A real `ws.WebSocket`
 // satisfies this structurally with no adapter, and a plain mock object
@@ -167,6 +168,42 @@ export interface BroadcastServerHandle {
 }
 
 /**
+ * The port-in-use message, as a pure function so it can be asserted on
+ * exactly. Before this, a taken port produced a raw EADDRINUSE stack trace
+ * that said nothing about which port, or what to do about it.
+ */
+export function formatPortInUseMessage(port: number): string {
+  return (
+    `[Wake] Port ${port} is already in use. Another Portsviews server may already be running ` +
+    '(look at your other terminal windows), or another program uses that port. Stop it, or choose ' +
+    'another port: set WAKE_BROADCAST_PORT and VITE_WAKE_BROADCAST_PORT to the same number in .env ' +
+    'and restart both the server and the display.'
+  )
+}
+
+export interface PortInUseReport {
+  code: 'EADDRINUSE'
+  port: number
+  message: string
+}
+
+export interface BroadcastServerOptions {
+  /**
+   * Called after the port-in-use message has been printed. Defaults to
+   * leaving with exit code 1 through the existing graceful shutdown path
+   * (shutdown.ts's requestShutdown), so the AIS connection is closed
+   * rather than left open as a ghost the free key will not let us replace.
+   * A test passes its own function to observe the failure without ending
+   * the test process.
+   */
+  onPortInUse?: (report: PortInUseReport) => void
+}
+
+const defaultPortInUse: (report: PortInUseReport) => void = () => {
+  requestShutdown('port-in-use', 1)
+}
+
+/**
  * The only function in this file that touches a real socket. Everything
  * else above operates on the abstract ClientSocket interface and is
  * exercised by the replay harness with no WebSocketServer involved.
@@ -176,9 +213,28 @@ export function createBroadcastServer(
   positionMap: PositionMap,
   staticMap: StaticMap,
   trackMap?: TrackMap,
+  options: BroadcastServerOptions = {},
 ): BroadcastServerHandle {
   const clients: Set<ClientSocket> = new Set()
   const wss = new WebSocketServer({ port })
+  const onPortInUse = options.onPortInUse ?? defaultPortInUse
+
+  // ws 8 re-emits the internal http server's 'error' on the WebSocketServer
+  // (websocket-server.js's addListeners), so a bind failure arrives here.
+  // Without this listener there was none at all, and Node threw the error
+  // as an uncaughtException -- the stack trace this replaces.
+  wss.on('error', (err: Error) => {
+    const code = (err as NodeJS.ErrnoException).code
+    if (code !== 'EADDRINUSE') {
+      // Every other error keeps its previous behaviour exactly: rethrowing
+      // reproduces the unhandled-'error' throw that registerShutdown's
+      // uncaughtException handler already logs and shuts down on.
+      throw err
+    }
+    const message = formatPortInUseMessage(port)
+    console.error(message)
+    onPortInUse({ code: 'EADDRINUSE', port, message })
+  })
 
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws)
@@ -192,7 +248,12 @@ export function createBroadcastServer(
     })
   })
 
-  console.log(`[Wake] Broadcast server listening on port ${port}`)
+  // Logged from the event rather than right after construction, so a bind
+  // that fails -- the port-in-use case above -- is not announced as
+  // listening a moment before it reports the port as taken.
+  wss.on('listening', () => {
+    console.log(`[Wake] Broadcast server listening on port ${port}`)
+  })
 
   return {
     clients,
