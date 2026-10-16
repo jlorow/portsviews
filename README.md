@@ -234,6 +234,33 @@ legend all work there but there is no land underneath. Adding one is a Protomaps
 the first minute — the display only knows about a vessel once that vessel has
 broadcast, and position reports arrive every couple of minutes per ship.
 
+## Status
+
+**Works today**
+
+- Live ships for the four built-in areas.
+- Maps for those areas, via `pnpm make-area --builtin <area>`.
+- Your own area, via `pnpm make-area`.
+- Zoom and panning: keys, the mouse wheel and drag.
+- Ship shapes by type.
+- Stopped ships drawn as yellow-green hulls.
+
+**Known limits**
+
+- Developed and tested on Windows. macOS and Linux should work, but they are
+  untested.
+- The free AISstream key allows only a few simultaneous connections, so run one
+  server per key.
+- Coverage depends on volunteer receivers and varies by region.
+- Right after a start, many ships show as "Other" until they announce their
+  type.
+- Stopped ships that report no heading are drawn as dots.
+- Labels can overlap other ships.
+- There is no route history yet, and no phone control.
+
+Bug reports, ideas and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## The kit
 
 Building this yourself means an evening of setup and a computer left running.
