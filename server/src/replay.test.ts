@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { isExpired } from '@wake/shared'
 import { createPositionMap, createStaticMap, type PositionMap, type StaticMap } from './caches.ts'
+import { createTrackMap } from './trackBuffer.ts'
 import type { ClientSocket } from './broadcast.ts'
 import type { PipelineContext } from './pipeline.ts'
 import {
@@ -31,6 +32,9 @@ function freshCtx(): PipelineContext {
   return {
     positionMap: createPositionMap(),
     staticMap: createStaticMap(),
+    // Route history v1: replay drives the same processEnvelope the live
+    // path does, so it fills this buffer the same way.
+    trackMap: createTrackMap(),
     clients: new Set<ClientSocket>(),
     removeSec: 900,
   }

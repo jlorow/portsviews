@@ -9,6 +9,7 @@ import {
   touchStaticOnActivity,
   STATIC_MAP_CAP,
 } from './caches.ts'
+import { createTrackMap } from './trackBuffer.ts'
 import {
   broadcastToClients,
   sendSnapshot,
@@ -90,6 +91,10 @@ function freshCtx(): PipelineContext {
   return {
     positionMap: createPositionMap(),
     staticMap: createStaticMap(),
+    // Route history v1: the pipeline context now carries the track
+    // buffer as well, so every envelope this harness feeds through
+    // processEnvelope fills it exactly as the live server's does.
+    trackMap: createTrackMap(),
     clients: new Set<ClientSocket>(),
     removeSec: 900,
   }

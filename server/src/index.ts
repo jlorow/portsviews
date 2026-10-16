@@ -21,6 +21,7 @@ import {
 import { createPositionMap, createStaticMap } from './caches.ts'
 import { createBroadcastServer } from './broadcast.ts'
 import { processEnvelope, type PipelineContext } from './pipeline.ts'
+import { createTrackMap } from './trackBuffer.ts'
 
 // pnpm --filter runs this script with cwd set to server/, not the repo
 // root, so bare `dotenv/config` (which only checks process.cwd()) would
@@ -192,11 +193,15 @@ const captureLogger = createCaptureLogger()
 
 const positionMap = createPositionMap()
 const staticMap = createStaticMap()
+// The route-history buffer. Created here, beside the position map it is
+// pruned against, and filled by processEnvelope.
+const trackMap = createTrackMap()
 const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap)
 
 const pipelineCtx: PipelineContext = {
   positionMap,
   staticMap,
+  trackMap,
   clients: broadcastServer.clients,
   removeSec: DEFAULT_CONFIG.removeSec,
 }
