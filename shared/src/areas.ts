@@ -143,7 +143,12 @@ export function resolveSourceConfig(
     const apiKey = env.aisstreamApiKey
     if (!apiKey || apiKey.trim() === '') {
       return {
-        error: 'AISSTREAM_API_KEY is missing or empty. Set it in .env before starting the server.',
+        // First-run fix: a stranger's first error says what to DO, not just
+        // what is wrong -- which file, where it goes, and the exact one-line
+        // shape, with "your-key" standing in for the value. The value is
+        // never echoed, only the variable's name.
+        error:
+          'AISSTREAM_API_KEY is missing or empty. Create a file named .env next to package.json (copy .env.example) and put one line in it: AISSTREAM_API_KEY=your-key (the name first, then =, then your key, no quotes). See the README, "Getting a free AISstream key".',
       }
     }
     return { url: AISSTREAM_URL, apiKey }
@@ -151,8 +156,10 @@ export function resolveSourceConfig(
   const apiKey = env.aiscastToken
   if (!apiKey || apiKey.trim() === '') {
     return {
+      // Same shape as the AISstream message above, for aiscast's own
+      // variable; the source requirement it always carried is kept.
       error:
-        'AISCAST_TOKEN is missing or empty -- required when WAKE_AIS_SOURCE=aiscast. Set it in .env.',
+        'AISCAST_TOKEN is missing or empty. Create a file named .env next to package.json (copy .env.example) and put one line in it: AISCAST_TOKEN=your-key (the name first, then =, then your key, no quotes). Required when WAKE_AIS_SOURCE=aiscast. See the README, "Getting a free AISstream key".',
     }
   }
   return { url: AISCAST_URL, apiKey }

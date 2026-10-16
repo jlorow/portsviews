@@ -19,6 +19,7 @@ import {
   FILTER_MESSAGE_TYPES,
 } from './aisstream.ts'
 import { createPositionMap, createStaticMap } from './caches.ts'
+import { missingKeyLines } from './envHint.ts'
 import { createBroadcastServer } from './broadcast.ts'
 import { processEnvelope, type PipelineContext } from './pipeline.ts'
 import { createTrackMap } from './trackBuffer.ts'
@@ -27,13 +28,17 @@ import { createTrackMap } from './trackBuffer.ts'
 // root, so bare `dotenv/config` (which only checks process.cwd()) would
 // never find the root .env. Resolve it explicitly instead.
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-config({ path: path.resolve(__dirname, '..', '..', '.env') })
+// One definition of the .env path, used both by dotenv here and by the
+// missing-key hint below, so the hint can never name a different file than
+// the one that was actually loaded (first-run fix).
+const repoRoot = path.resolve(__dirname, '..', '..')
+const envPath = path.join(repoRoot, '.env')
+config({ path: envPath })
 
 // DEMO-1: demo area and AIS source come from settings. Invalid values or
 // a missing key for the chosen source refuse to start with a clear
 // message naming the VARIABLE -- never its value -- and do so BEFORE
 // acquireLock(), so a refused start never leaves a stale PID lockfile.
-const repoRoot = path.resolve(__dirname, '..', '..')
 const localAreasPath = path.join(repoRoot, 'areas.local.json')
 
 function readLocalAreas(): import('@wake/shared').LocalAreasFile | null {
@@ -84,6 +89,15 @@ const sourceConfig = resolveSourceConfig(
   aisSource,
 )
 if ('error' in sourceConfig) {
+  // First-run fix: two plain lines before the error. Where .env was looked
+  // for, and whether it was there -- fs.existsSync ONLY, so the file is
+  // never read, parsed or printed, and no value can reach the log. The
+  // lines themselves come from a pure helper (envHint.ts) so a test covers
+  // all three cases.
+  const missingVariable = aisSource === 'aiscast' ? 'AISCAST_TOKEN' : 'AISSTREAM_API_KEY'
+  for (const line of missingKeyLines(envPath, fs.existsSync(envPath), missingVariable)) {
+    console.error(line)
+  }
   console.error(`[Wake] ${sourceConfig.error}`)
   process.exit(1)
 }

@@ -50,6 +50,33 @@ assertEqual(parseAisSource('x'), null, "parseAisSource: 'x' -> null")
 
 // --- resolveSourceConfig ---
 
+// The two "missing key" messages, hardcoded. They are what a stranger sees on
+// a first run, so each is asserted EXACTLY (a change to either text must be a
+// deliberate change here), and then taken apart piece by piece by
+// assertMissingKeyMessage below -- the checks the first-run story asks for.
+const AISSTREAM_MISSING_KEY_MESSAGE =
+  'AISSTREAM_API_KEY is missing or empty. Create a file named .env next to package.json (copy .env.example) and put one line in it: AISSTREAM_API_KEY=your-key (the name first, then =, then your key, no quotes). See the README, "Getting a free AISstream key".'
+const AISCAST_MISSING_KEY_MESSAGE =
+  'AISCAST_TOKEN is missing or empty. Create a file named .env next to package.json (copy .env.example) and put one line in it: AISCAST_TOKEN=your-key (the name first, then =, then your key, no quotes). Required when WAKE_AIS_SOURCE=aiscast. See the README, "Getting a free AISstream key".'
+
+/**
+ * First-run story: the message must name the variable it is about, mention
+ * `.env`, show the placeholder `your-key`, and carry nothing else that could
+ * be mistaken for a real credential. That last check is a run of 20+ unbroken
+ * letters or digits -- no real key-like string is that short, and every long
+ * identifier in these sentences (AISSTREAM_API_KEY, package.json,
+ * WAKE_AIS_SOURCE=aiscast) is broken up by an underscore or a dot.
+ */
+function assertMissingKeyMessage(message: string, variable: string, label: string): void {
+  assert(message.includes(variable), `${label}: names ${variable}`)
+  assert(message.includes('.env'), `${label}: mentions .env`)
+  assert(message.includes('your-key'), `${label}: shows the your-key placeholder`)
+  assert(
+    !/[A-Za-z0-9]{20,}/.test(message),
+    `${label}: contains no key-like run of 20 or more characters, so nothing value-like`,
+  )
+}
+
 {
   const resolved = resolveSourceConfig({ aiscastToken: 'tok-abc' }, 'aiscast')
   assert(
@@ -64,16 +91,16 @@ assertEqual(parseAisSource('x'), null, "parseAisSource: 'x' -> null")
 
 {
   const resolved = resolveSourceConfig({}, 'aiscast')
+  const message = 'error' in resolved ? resolved.error : ''
   // Exact expected message, hardcoded: it names the VARIABLE and never
   // contains any credential value. (An earlier version asserted the
   // message contains no '=' -- wrong on its own terms, since the message
   // legitimately mentions WAKE_AIS_SOURCE=aiscast.)
   assert(
-    'error' in resolved &&
-      resolved.error ===
-        'AISCAST_TOKEN is missing or empty -- required when WAKE_AIS_SOURCE=aiscast. Set it in .env.',
-    'resolveSourceConfig: aiscast without token -> exact error naming AISCAST_TOKEN only (got ' + JSON.stringify(resolved) + ')',
+    message === AISCAST_MISSING_KEY_MESSAGE,
+    'resolveSourceConfig: aiscast without token -> exact missing-key message (got ' + JSON.stringify(resolved) + ')',
   )
+  assertMissingKeyMessage(message, 'AISCAST_TOKEN', 'aiscast missing-key message')
 }
 
 {
@@ -86,13 +113,13 @@ assertEqual(parseAisSource('x'), null, "parseAisSource: 'x' -> null")
 
 {
   const resolved = resolveSourceConfig({}, 'aisstream')
+  const message = 'error' in resolved ? resolved.error : ''
   // Exact expected message, hardcoded: names the variable, no value.
   assert(
-    'error' in resolved &&
-      resolved.error ===
-        'AISSTREAM_API_KEY is missing or empty. Set it in .env before starting the server.',
-    'resolveSourceConfig: aisstream without key -> exact error naming AISSTREAM_API_KEY only (got ' + JSON.stringify(resolved) + ')',
+    message === AISSTREAM_MISSING_KEY_MESSAGE,
+    'resolveSourceConfig: aisstream without key -> exact missing-key message (got ' + JSON.stringify(resolved) + ')',
   )
+  assertMissingKeyMessage(message, 'AISSTREAM_API_KEY', 'aisstream missing-key message')
 }
 
 {
