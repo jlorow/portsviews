@@ -326,6 +326,7 @@ import {
   applyDrag,
   applyWheelAtPointer,
   dragPanView,
+  handlePanKeydown,
   panKeyMultiplier,
   unproject,
   zoomAtPoint,
@@ -418,6 +419,130 @@ for (const mirrorX of [false, true]) {
 
 assert(panKeyMultiplier({ shiftKey: true }) === 5, 'panKeyMultiplier: shiftKey=true -> 5')
 assert(panKeyMultiplier({ shiftKey: false }) === 1, 'panKeyMultiplier: shiftKey=false -> 1')
+
+// --- handlePanKeydown -----------------------------------------------------
+
+// Shift+arrow moves exactly 5x as far as plain arrow (unclamped, tolerance 1e-9 deg).
+for (const { box, lat, lon, label } of [
+  { box: DOVER_BOX, lat: 51.1, lon: 1.45, label: 'dover' },
+  { box: SYDNEY_BOX, lat: -33.93, lon: 151.22, label: 'sydney' },
+] as { box: number[][][]; lat: number; lon: number; label: string }[]) {
+  for (const mirrorX of [false, true]) {
+    const config = { mirrorX, rotationDeg: 0 }
+    const view: PointerView = { centerLat: lat, centerLon: lon, radiusNm: 5 }
+    for (const direction of ['up', 'down', 'left', 'right'] as const) {
+      const noShift = handlePanKeydown(
+        view,
+        { key: `Arrow${direction.charAt(0).toUpperCase() + direction.slice(1)}`, repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, targetIsEditable: false },
+        box,
+        config,
+      )
+      const withShift = handlePanKeydown(
+        view,
+        { key: `Arrow${direction.charAt(0).toUpperCase() + direction.slice(1)}`, repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: true, targetIsEditable: false },
+        box,
+        config,
+      )
+      const dLatNo = Math.abs(noShift.view.centerLat - lat)
+      const dLonNo = Math.abs(noShift.view.centerLon - lon)
+      const dLatShift = Math.abs(withShift.view.centerLat - lat)
+      const dLonShift = Math.abs(withShift.view.centerLon - lon)
+      // Avoid division by zero: up/down change lat, left/right change lon.
+      if (direction === 'up' || direction === 'down') {
+        assert(
+          Math.abs(dLatShift - 5 * dLatNo) < 1e-9,
+          `handlePanKeydown ${label} ${direction} mirror=${mirrorX}: shift moves 5x in lat (delta=${(dLatShift - 5 * dLatNo).toExponential(2)})`,
+        )
+      } else {
+        assert(
+          Math.abs(dLonShift - 5 * dLonNo) < 1e-9,
+          `handlePanKeydown ${label} ${direction} mirror=${mirrorX}: shift moves 5x in lon (delta=${(dLonShift - 5 * dLonNo).toExponential(2)})`,
+        )
+      }
+    }
+  }
+}
+
+// A shifted press near the feed box edge ends clamped inside the box.
+{
+  const view: PointerView = { centerLat: -33.929333, centerLon: 151.22, radiusNm: 20 }
+  const result = handlePanKeydown(
+    view,
+    { key: 'ArrowUp', repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: true, targetIsEditable: false },
+    SYDNEY_BOX,
+    { mirrorX: false, rotationDeg: 0 },
+  )
+  const clamped = clampPanToFeed(result.view.centerLat, result.view.centerLon, result.view.radiusNm, SYDNEY_BOX)
+  assert(
+    Math.abs(clamped.centerLat - result.view.centerLat) < 1e-9 && Math.abs(clamped.centerLon - result.view.centerLon) < 1e-9,
+    'handlePanKeydown: shifted arrow near box edge is clamped inside the feed box',
+  )
+}
+
+// ctrl, alt or meta with shift: not handled.
+for (const mod of ['ctrlKey', 'metaKey', 'altKey'] as const) {
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 5 }
+  const e = { key: 'ArrowRight', repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: true, targetIsEditable: false }
+  const r = handlePanKeydown(view, { ...e, [mod]: true }, DOVER_BOX, { mirrorX: false, rotationDeg: 0 })
+  assert(r.handled === false, `handlePanKeydown: ${mod} with shift is not handled`)
+}
+
+// targetIsEditable with shift: not handled.
+{
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 5 }
+  const r = handlePanKeydown(
+    view,
+    { key: 'ArrowRight', repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: true, targetIsEditable: true },
+    DOVER_BOX,
+    { mirrorX: false, rotationDeg: 0 },
+  )
+  assert(r.handled === false, 'handlePanKeydown: targetIsEditable with shift is not handled')
+}
+
+// Unrelated keys: not handled.
+{
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 5 }
+  const r = handlePanKeydown(
+    view,
+    { key: 'a', repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: true, targetIsEditable: false },
+    DOVER_BOX,
+    { mirrorX: false, rotationDeg: 0 },
+  )
+  assert(r.handled === false, 'handlePanKeydown: unrelated key with shift is not handled')
+}
+
+// Holding (repeat true) is handled.
+{
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 5 }
+  const r = handlePanKeydown(
+    view,
+    { key: 'ArrowRight', repeat: true, ctrlKey: false, metaKey: false, altKey: false, shiftKey: true, targetIsEditable: false },
+    DOVER_BOX,
+    { mirrorX: false, rotationDeg: 0 },
+  )
+  assert(r.handled === true, 'handlePanKeydown: repeat with shift is handled')
+}
+
+// Object built exactly the way the DOM listener builds it.
+{
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 5 }
+  const r = handlePanKeydown(
+    view,
+    {
+      key: 'ArrowRight',
+      repeat: false,
+      ctrlKey: false,
+      metaKey: false,
+      altKey: false,
+      shiftKey: true,
+      targetIsEditable: false,
+    },
+    DOVER_BOX,
+    { mirrorX: false, rotationDeg: 0 },
+  )
+  assert(r.handled === true, 'handlePanKeydown: DOM-shaped object with shift is handled')
+  assert(r.view.centerLon > view.centerLon, 'handlePanKeydown: DOM-shaped object actually pans right')
+}
 
 // --- applyWheelAtPointer -------------------------------------------------
 

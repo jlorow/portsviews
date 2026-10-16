@@ -199,6 +199,7 @@ export interface PanKeyEvent {
   ctrlKey: boolean
   metaKey: boolean
   altKey: boolean
+  shiftKey?: boolean
   targetIsEditable: boolean
 }
 
@@ -371,6 +372,45 @@ export function dragPanView(
 /** Returns 5 when Shift is held, 1 otherwise. */
 export function panKeyMultiplier(event: { shiftKey: boolean }): number {
   return event.shiftKey ? 5 : 1
+}
+
+export interface HandlePanKeydownEvent {
+  key: string
+  repeat?: boolean
+  ctrlKey: boolean
+  metaKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+  targetIsEditable: boolean
+}
+
+export interface HandlePanKeydownResult {
+  view: PointerView
+  handled: boolean
+}
+
+/**
+ * Pure controller for the arrow-key pan handler. Accepts the full event
+ * shape the DOM listener can fill straight from a KeyboardEvent (including
+ * shiftKey), returns the new view and whether the event was handled.
+ * The multiplier (1 or 5) is applied to the fraction before clamping, so
+ * the unclamped displacement is exactly multiplier × PAN_FRACTION × radiusNm.
+ */
+export function handlePanKeydown(
+  view: PointerView,
+  e: HandlePanKeydownEvent,
+  feedBox: number[][][],
+  projectionConfig: ProjectionConfig,
+): HandlePanKeydownResult {
+  const direction = panKeyAction(e)
+  if (direction === null) return { view, handled: false }
+  const multiplier = panKeyMultiplier(e)
+  const moved = panCenter(view.centerLat, view.centerLon, direction, view.radiusNm, projectionConfig, multiplier * PAN_FRACTION)
+  const clamped = clampPanToFeed(moved.centerLat, moved.centerLon, view.radiusNm, feedBox)
+  return {
+    view: { centerLat: clamped.centerLat, centerLon: clamped.centerLon, radiusNm: view.radiusNm },
+    handled: true,
+  }
 }
 
 export interface ApplyWheelResult {

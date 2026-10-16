@@ -2,11 +2,8 @@ import { useEffect, useRef, useState } from 'react'
 import {
   DEFAULT_CONFIG,
   DEMO_AREAS,
-  PAN_FRACTION,
   clampPanToFeed,
-  panCenter,
-  panKeyAction,
-  panKeyMultiplier,
+  handlePanKeydown,
   applyWheelAtPointer,
   applyDrag,
   parseLocalAreas,
@@ -18,7 +15,6 @@ import {
   type DemoAreaKey,
   type DisplayConfig,
   type LocalAreasFile,
-  type PanDirection,
 } from '@wake/shared'
 import ConnectionIndicator from '../ConnectionIndicator'
 import {
@@ -234,14 +230,6 @@ export default function WakeCanvas() {
       applyView()
     }
 
-    const panBy = (direction: PanDirection, multiplier: number = 1) => {
-      const view = viewRef.current
-      const moved = panCenter(view.centerLat, view.centerLon, direction, view.radiusNm, PROJ_CONFIG, multiplier * PAN_FRACTION)
-      const clamped = clampPanToFeed(moved.centerLat, moved.centerLon, view.radiusNm, FEED_BOX)
-      viewRef.current = { ...view, centerLat: clamped.centerLat, centerLon: clamped.centerLon }
-      applyView()
-    }
-
     const handleZoomKeyDown = (event: KeyboardEvent) => {
       const action = zoomKeyAction({
         key: event.key,
@@ -270,19 +258,24 @@ export default function WakeCanvas() {
     // Arrow keys pan. Key repeat is ALLOWED here (panKeyAction passes it
     // through on purpose): holding an arrow keeps the view moving.
     const handlePanKeyDown = (event: KeyboardEvent) => {
-      const direction = panKeyAction({
-        key: event.key,
-        repeat: event.repeat,
-        ctrlKey: event.ctrlKey,
-        metaKey: event.metaKey,
-        altKey: event.altKey,
-        targetIsEditable: targetIsEditable(event.target),
-      })
-      if (direction === null) return
-
+      const result = handlePanKeydown(
+        viewRef.current,
+        {
+          key: event.key,
+          repeat: event.repeat,
+          ctrlKey: event.ctrlKey,
+          metaKey: event.metaKey,
+          altKey: event.altKey,
+          shiftKey: event.shiftKey,
+          targetIsEditable: targetIsEditable(event.target),
+        },
+        FEED_BOX,
+        PROJ_CONFIG,
+      )
+      if (!result.handled) return
       event.preventDefault()
-      const multiplier = panKeyMultiplier(event)
-      panBy(direction, multiplier)
+      viewRef.current = result.view
+      applyView()
     }
 
     // passive: false because a wheel step we act on must also be prevented
