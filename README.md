@@ -35,11 +35,15 @@ cd portsviews
 pnpm install
 
 # 3. Put your free AISstream key in a .env file at the top level
-# On Windows, use Notepad or your code editor instead of echo: older Windows
-# PowerShell can save redirected files in a format the server cannot read.
-echo "AISSTREAM_API_KEY=your-key-here" > .env
+# Copy the template into place (pick the line for your shell):
+cp .env.example .env      # macOS, Linux
+copy .env.example .env    # Windows Command Prompt or PowerShell
+# Then open .env in any text editor (on Windows: notepad .env) and put your
+# key after AISSTREAM_API_KEY= -- the name first, then =, then the key, no
+# quotes and no spaces -- then save the file.
 
 # 4. Start the data server (leave this running)
+# Only one server can use port 8080 at a time; if another Portsviews server is already running, stop it first (Ctrl+C in its window).
 pnpm --filter @wake/server start
 
 # 5. In a SECOND terminal, start the display
@@ -81,9 +85,19 @@ AISSTREAM_API_KEY=abc123...
 Keep that file to yourself. It is already listed in `.gitignore`, so git will
 not commit it by accident.
 
-**If the server says `AISSTREAM_API_KEY is missing or empty`**, it did not find
-the file. Check that `.env` is at the top level and that the line has no leading
-spaces.
+**If the server says `AISSTREAM_API_KEY is missing or empty`**, work through
+this list — each entry is a real cause:
+
+- The line must start with the name, `AISSTREAM_API_KEY=`, not the key on its
+  own. Name first, then `=`, then your key.
+- No quotes and no spaces: `AISSTREAM_API_KEY=abc123` on one line, exactly.
+- The file is named exactly `.env`. Windows Explorer hides real endings, so a
+  file you think is `.env` can be `.env.txt`; turn on "File name extensions"
+  and check.
+- It sits next to `package.json` at the top level of the project, not inside
+  `server/`.
+- It was written by a text editor, not by `echo`: a shell redirect can save the
+  file in a format the server cannot read.
 
 ## Choosing what you watch
 
