@@ -197,12 +197,14 @@ step per swipe around the pointer. Click and drag to pan — touch drag works
 too. The built-in areas step through 20, 10, 5, 2 and 1 nm. The arrow keys
 move the view — up, down, left and right pan the centre that way on screen —
 and Shift plus an arrow key pans five times as far. The view is limited to the
-area the live feed covers, so panning cannot pull an empty edge into view. `0`
-resets both the zoom and the view, back to the area's own centre. Ctrl, Alt and
-Cmd combinations are ignored so the browser's own zoom still works. Pinch zoom
-is not supported yet. Add `?tune=1` for the tuning keys and the view status
-line, which reads e.g. `View 5nm N+1.2 E-0.4`: the current radius and how far
-the centre has been moved from the area's centre.
+area the live feed covers, so panning cannot pull an empty edge into view. At
+the default zoom the view already covers the whole area the live feed delivers,
+so there is little room to move; zoom in first, then pan with the arrow keys or
+by dragging. `0` resets both the zoom and the view, back to the area's own
+centre. Ctrl, Alt and Cmd combinations are ignored so the browser's own zoom
+still works. Pinch zoom is not supported yet. Add `?tune=1` for the tuning keys
+and the view status line, which reads e.g. `View 5nm N+1.2 E-0.4`: the current
+radius and how far the centre has been moved from the area's centre.
 
 ## What you will see
 
@@ -224,11 +226,12 @@ setup and nothing to download. It is a 10 MB Protomaps archive at
 `apps/display/public/tiles/dover-z11.pmtiles`, read straight off disk; the
 display makes no request to any map service at runtime.
 
-**The other three areas draw on plain black.** `istanbul`, `portsaid` and
-`sydney` have no map archive of their own yet, so the ships, trails, labels and
-legend all work there but there is no land underneath. Adding one is a Protomaps
-`.pmtiles` extract dropped into the same folder plus a row in
-`shared/src/basemap.ts`.
+The other three built-in areas have no map file until you make one. Run
+`pnpm make-area --builtin istanbul` (or `portsaid`, or `sydney`) once, restart
+the server and the display, and the land appears. Until then they draw on plain
+black: the ships, trails, labels and legend all work, there is just no land
+underneath. See Your own area for the install step and for any other place in
+the world.
 
 **Ships take a moment to appear.** Nothing is wrong if the screen is empty for
 the first minute — the display only knows about a vessel once that vessel has
@@ -291,6 +294,13 @@ npx tsx apps/display/src/vesselTracker.test.ts
 
 Type-check a package with `pnpm --filter display tsc --noEmit` or
 `pnpm --filter @wake/server tsc --noEmit`.
+
+## Support
+
+Portsviews is free and open source and made by one person. If it is useful to
+you, you can support it through GitHub Sponsors:
+https://github.com/sponsors/jlorow. Bug reports, ideas and pull requests are
+just as welcome; see CONTRIBUTING.md.
 
 ## License
 
