@@ -136,6 +136,33 @@ function assertOptionalSettingsAreDefaults(env: Record<string, string>, label: s
 // --- the shipped template ---
 
 const template = readTemplate()
+
+// The template ships exactly ONE active setting: the key the user must
+// supply. Every other variable is switched off behind a leading '#', so a
+// copied-and-filled .env leaves the optionals undefined (unset), and the
+// documented defaults apply -- and no blank can be read as a real value.
+const templateKeys = Object.keys(template).sort()
+assert(
+  templateKeys.length === 1 && templateKeys[0] === 'AISSTREAM_API_KEY',
+  `the template defines exactly one key, AISSTREAM_API_KEY (got ${JSON.stringify(templateKeys)})`,
+)
+for (const name of [
+  'AIS_CAPTURE_PATH',
+  'WAKE_BROADCAST_PORT',
+  'VITE_WAKE_BROADCAST_PORT',
+  'WAKE_REPLAY_PATH',
+  'WAKE_REPLAY_SPEED',
+  'CAPACITY_CAPTURE_DURATION_MIN',
+  'WAKE_AREA',
+  'WAKE_AIS_SOURCE',
+  'AISCAST_TOKEN',
+]) {
+  assert(
+    !(name in template),
+    `${name} is switched off in the template (commented out), not defined`,
+  )
+}
+
 // "Take ONLY what it defines": the entry a user must supply is added here,
 // exactly as the README tells them to.
 const shipped: Record<string, string> = { ...template, AISSTREAM_API_KEY: 'abc' }

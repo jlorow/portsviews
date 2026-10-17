@@ -41,6 +41,7 @@ copy .env.example .env    # Windows Command Prompt or PowerShell
 # Then open .env in any text editor (on Windows: notepad .env) and put your
 # key after AISSTREAM_API_KEY= -- the name first, then =, then the key, no
 # quotes and no spaces -- then save the file.
+# Optional settings in .env.example start with # (switched off); remove the # to use one.
 
 # 4. Start the data server (leave this running)
 # Only one server can use port 8080 at a time; if another Portsviews server is already running, stop it first (Ctrl+C in its window).
