@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { isBlank } from '@wake/shared'
 import type { SubscriptionConfig } from '../aisstream.ts'
 import type { CloseableSocket } from '../shutdown.ts'
 import type { ScheduleFn, ClockFn } from '../replayCore.ts'
@@ -148,7 +149,9 @@ export function decideOnClose(stopping: boolean, conn: 'A' | 'B', code: number, 
  * scheduling nothing and never stopping the run at all).
  */
 export function parseDurationMin(raw: string | undefined): number | null {
-  if (raw === undefined || raw.trim() === '') return DEFAULT_DURATION_MIN
+  // Blank is decided by the shared isBlank(), the same rule every other
+  // optional setting uses.
+  if (isBlank(raw)) return DEFAULT_DURATION_MIN
   const n = Number(raw)
   if (!Number.isFinite(n)) return null
   if (n < MIN_DURATION_MIN || n > MAX_DURATION_MIN) return null

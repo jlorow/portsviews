@@ -3,8 +3,10 @@ import { config } from 'dotenv'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
+  DEFAULT_BROADCAST_PORT,
   DEFAULT_CONFIG,
   DEMO_AREAS,
+  parsePort,
   parseAisSource,
   parseLocalAreas,
   resolveArea,
@@ -109,7 +111,15 @@ const area = resolvedArea.area
 acquireLock()
 
 const HEARTBEAT_MS = 60000
-const BROADCAST_PORT = Number(process.env.WAKE_BROADCAST_PORT ?? 8080)
+// A blank WAKE_BROADCAST_PORT is unset, not 0: `??` never fires for '',
+// and Number('') is 0, which would bind a random ephemeral port the
+// display cannot know about.
+const portResult = parsePort(process.env.WAKE_BROADCAST_PORT, DEFAULT_BROADCAST_PORT, 'WAKE_BROADCAST_PORT')
+if (!portResult.ok) {
+  console.error(`[Wake] ${portResult.error}`)
+  process.exit(1)
+}
+const BROADCAST_PORT = portResult.value
 
 interface BoxBounds {
   minLat: number

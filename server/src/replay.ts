@@ -2,7 +2,17 @@ import fs from 'node:fs'
 import { config } from 'dotenv'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEFAULT_CONFIG, DEMO_AREAS, parseDemoArea, parseLocalAreas, resolveArea, type LocalAreasFile } from '@wake/shared'
+import {
+  DEFAULT_BROADCAST_PORT,
+  DEFAULT_CONFIG,
+  DEMO_AREAS,
+  parseDemoArea,
+  parseLocalAreas,
+  parsePositiveNumber,
+  parsePort,
+  resolveArea,
+  type LocalAreasFile,
+} from '@wake/shared'
 import { registerShutdown } from './shutdown.ts'
 import { createPositionMap, createStaticMap } from './caches.ts'
 import { createBroadcastServer } from './broadcast.ts'
@@ -32,8 +42,22 @@ import { readCaptureFile, scheduleReplay } from './replayCore.ts'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 config({ path: path.resolve(__dirname, '..', '..', '.env') })
 
-const BROADCAST_PORT = Number(process.env.WAKE_BROADCAST_PORT ?? 8080)
-const REPLAY_SPEED = Number(process.env.WAKE_REPLAY_SPEED ?? 1)
+// Blank is unset for both: the port falls back to the shared 8080, and the
+// speed to real time. Number('') is 0, and a speed of 0 would divide the
+// capture's gaps by zero.
+const portResult = parsePort(process.env.WAKE_BROADCAST_PORT, DEFAULT_BROADCAST_PORT, 'WAKE_BROADCAST_PORT')
+if (!portResult.ok) {
+  console.error(`[Wake:REPLAY] ${portResult.error}`)
+  process.exit(1)
+}
+const BROADCAST_PORT = portResult.value
+
+const speedResult = parsePositiveNumber(process.env.WAKE_REPLAY_SPEED, 1, 'WAKE_REPLAY_SPEED')
+if (!speedResult.ok) {
+  console.error(`[Wake:REPLAY] ${speedResult.error}`)
+  process.exit(1)
+}
+const REPLAY_SPEED = speedResult.value
 const REPLAY_PATH = process.env.WAKE_REPLAY_PATH
 const PROGRESS_LOG_INTERVAL = 100
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  DEFAULT_BROADCAST_PORT,
   DEFAULT_CONFIG,
   DEMO_AREAS,
   clampPanToFeed,
@@ -7,6 +8,7 @@ import {
   applyWheelAtPointer,
   applyDrag,
   parseLocalAreas,
+  parsePort,
   radiusStepsFor,
   resolveArea,
   basemapFor,
@@ -27,8 +29,6 @@ import { createTrackedVesselMap, onFixArrived, renderFrame } from '../vesselTrac
 import { mountBasemap, type BasemapHandle } from '../basemap/basemapMount'
 import { drawAttribution, drawPlaceNames } from './placeNames'
 import { FPS_WINDOW_MS, applyTuneKey, tuneOverlayText } from './tuneOverlay'
-
-const DEFAULT_BROADCAST_PORT = 8080
 
 let localAreas: LocalAreasFile | null = null
 try {
@@ -98,10 +98,20 @@ interface WakeView {
 
 // window.location.hostname rather than a hardcoded 'localhost' -- the
 // display and the server are not guaranteed to be the same machine.
-// Port is read from an env var, not hardcoded, matching the server's own
-// WAKE_BROADCAST_PORT default of 8080 if unset.
+// Port is read from an env var, not hardcoded. The default is the SAME
+// shared constant the server falls back to (DEFAULT_BROADCAST_PORT), so
+// the two ends can never disagree: blank is unset, and an invalid value
+// warns once and takes the default instead of building a URL with it.
 function buildServerUrl(): string {
-  const port = import.meta.env.VITE_WAKE_BROADCAST_PORT || String(DEFAULT_BROADCAST_PORT)
+  const portResult = parsePort(
+    import.meta.env.VITE_WAKE_BROADCAST_PORT,
+    DEFAULT_BROADCAST_PORT,
+    'VITE_WAKE_BROADCAST_PORT',
+  )
+  if (!portResult.ok) {
+    console.warn(`[Wake] ${portResult.error}`)
+  }
+  const port = portResult.ok ? portResult.value : DEFAULT_BROADCAST_PORT
   return `ws://${globalThis.location.hostname}:${port}`
 }
 

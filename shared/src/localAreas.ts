@@ -1,5 +1,6 @@
 import { DEMO_AREAS, type DemoArea } from './areas.ts'
 import { BASEMAP_AREAS, type BasemapAreaConfig, type BasemapPlace } from './basemap.ts'
+import { isBlank } from './env.ts'
 
 export const MAX_CUSTOM_RADIUS_NM = 40
 export const MIN_CUSTOM_RADIUS_NM = 5
@@ -349,7 +350,9 @@ export function resolveArea(
   raw: string | undefined,
   local: LocalAreasFile | null,
 ): { key: string; area: DemoArea; source: 'builtin' | 'local' } | null {
-  if (raw === undefined || raw === '') {
+  // "Blank" is isBlank(): undefined, '', or whitespace only. A blank
+  // setting is unset, not an unknown area the caller should warn about.
+  if (isBlank(raw)) {
     return { key: 'dover', area: DEMO_AREAS.dover, source: 'builtin' }
   }
 

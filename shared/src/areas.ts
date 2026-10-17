@@ -4,6 +4,8 @@
 // @wake/shared alias) and the server (index.ts, replay.ts). No Node-only
 // imports here.
 
+import { isBlank } from './env.ts'
+
 /**
  * The AISstream endpoint. Defined here (shared) so the server's client
  * and resolveSourceConfig cannot drift apart; server/src/aisstream.ts
@@ -93,10 +95,12 @@ export type DemoAreaKey = keyof typeof DEMO_AREAS
 /**
  * undefined or blank → 'dover' (the default); an exact key → that key;
  * anything else → null (the caller decides warn vs refuse). Exact match
- * only — no trimming, no case-folding — so 'Istanbul' is invalid.
+ * only — no trimming, no case-folding — so 'Istanbul' is invalid. "Blank"
+ * is isBlank(): undefined, '', or whitespace only. A whitespace-only value
+ * is a missing value, not an invalid area the server should refuse.
  */
 export function parseDemoArea(raw: string | undefined): DemoAreaKey | null {
-  if (raw === undefined || raw === '') return 'dover'
+  if (isBlank(raw)) return 'dover'
   // hasOwnProperty, not `raw in DEMO_AREAS`: `in` does not narrow a string
   // to the key union under TS 5.7 (display typechecks under lib ES2020, so
   // Object.hasOwn is not available either). The cast is the documented
@@ -111,10 +115,10 @@ export type AisSource = 'aisstream' | 'aiscast'
 
 /**
  * undefined or blank → 'aisstream' (the default); an exact key → that
- * key; anything else → null. Exact match only.
+ * key; anything else → null. Exact match only; blank is isBlank().
  */
 export function parseAisSource(raw: string | undefined): AisSource | null {
-  if (raw === undefined || raw === '') return 'aisstream'
+  if (isBlank(raw)) return 'aisstream'
   if (raw === 'aisstream' || raw === 'aiscast') return raw
   return null
 }

@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
-import { parseLocalAreas } from '@wake/shared'
+import { DEFAULT_BROADCAST_PORT, parseLocalAreas, parsePort } from '@wake/shared'
 
 // DEMO-1: loads ONLY WAKE_AREA from the repo-root .env and injects it as
 // one compile-time constant. The prefix argument restricts loadEnv to
@@ -16,8 +16,11 @@ import { parseLocalAreas } from '@wake/shared'
 // The prefix is listed by FULL NAME rather than as a bare 'WAKE_'
 // prefix, so a future secret whose name happens to start with WAKE_
 // cannot be loaded here at all -- the property DEMO-1 relied on, kept
-// deliberately rather than by luck.
-const PUBLIC_ENV_PREFIXES = ['WAKE_AREA']
+// deliberately rather than by luck. VITE_WAKE_BROADCAST_PORT is here
+// because it is public by construction: it is the address the browser
+// dials, and Vite would expose it anyway once it is VITE_-prefixed. No
+// credential's name is in this list.
+const PUBLIC_ENV_PREFIXES = ['WAKE_AREA', 'VITE_WAKE_BROADCAST_PORT']
 
 export default defineConfig(({ mode }) => {
   // __dirname is apps/display; the root .env lives two directories up.
@@ -36,6 +39,16 @@ export default defineConfig(({ mode }) => {
       throw new Error(`Invalid areas.local.json at ${localAreasPath}: ${(error as Error).message}`)
     }
   }
+  // One resolution, shared with the server: blank is unset (not 0), and
+  // anything that is not a whole number 1..65535 falls back to 8080 with
+  // one warning here rather than producing a URL the browser cannot dial.
+  // Injected as a string, the shape import.meta.env always has.
+  const portResult = parsePort(env.VITE_WAKE_BROADCAST_PORT, DEFAULT_BROADCAST_PORT, 'VITE_WAKE_BROADCAST_PORT')
+  if (!portResult.ok) {
+    console.warn(`[Wake] ${portResult.error}`)
+  }
+  const broadcastPort = portResult.ok ? portResult.value : DEFAULT_BROADCAST_PORT
+
   return {
     plugins: [react()],
     resolve: {
@@ -51,6 +64,9 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.WAKE_LOCAL_AREAS': JSON.stringify(
         wakeLocalAreas === null ? '' : JSON.stringify(wakeLocalAreas),
       ),
+      // Always a valid port string: the same shared constant the server
+      // falls back to, so the two can never disagree.
+      'import.meta.env.VITE_WAKE_BROADCAST_PORT': JSON.stringify(String(broadcastPort)),
     }
   }
 })

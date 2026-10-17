@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { isBlank } from '@wake/shared'
 
 export interface CaptureLogger {
   write(envelope: unknown): void
@@ -9,6 +10,15 @@ export interface CaptureLogger {
 const CLOSE_TIMEOUT_MS = 2000
 
 /**
+ * Blank (undefined, '', or whitespace only) means capture is OFF, decided
+ * by the shared isBlank() so this setting follows the same rule as every
+ * other optional one. A path that is not blank is used as written.
+ */
+export function resolveCapturePath(raw: string | undefined): string | undefined {
+  return isBlank(raw) ? undefined : raw
+}
+
+/**
  * Off unless AIS_CAPTURE_PATH is set. When set, every raw envelope the
  * socket receives is appended verbatim (wrapped with a local receipt
  * timestamp) so S3.3's normalize step has real data to test against
@@ -16,7 +26,7 @@ const CLOSE_TIMEOUT_MS = 2000
  * casing on this exact message.
  */
 export function createCaptureLogger(): CaptureLogger | undefined {
-  const capturePath = process.env.AIS_CAPTURE_PATH
+  const capturePath = resolveCapturePath(process.env.AIS_CAPTURE_PATH)
 
   if (!capturePath || capturePath.trim() === '') {
     return undefined
