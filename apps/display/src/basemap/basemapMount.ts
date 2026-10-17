@@ -143,14 +143,16 @@ export function mountBasemap(options: BasemapMountOptions): BasemapHandle {
     resize(width: number, height: number) {
       currentWidth = width
       currentHeight = height
+      // map.resize() FIRST: it re-reads the container's size and the
+      // current devicePixelRatio and resizes MapLibre's own canvas to
+      // them. The camera is fitted after that, against the new size; done
+      // the other way round, the jump was applied to the old size and then
+      // re-constrained by the resize.
+      map.resize()
       // The zoom depends on the window size AND on the current view, so it
       // is recomputed from the live centre and radius, never from the ones
       // this map was mounted with.
-      map.jumpTo({
-        center: [currentCenterLon, currentCenterLat],
-        zoom: basemapZoom(width, height, currentCenterLat, currentRadiusNm),
-      })
-      map.resize()
+      applyView(currentCenterLat, currentCenterLon, currentRadiusNm)
     },
     setView(nextCenterLat: number, nextCenterLon: number, nextRadiusNm: number) {
       applyView(nextCenterLat, nextCenterLon, nextRadiusNm)

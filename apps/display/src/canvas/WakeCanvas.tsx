@@ -29,6 +29,7 @@ import { createTrackedVesselMap, onFixArrived, renderFrame } from '../vesselTrac
 import { mountBasemap, type BasemapHandle } from '../basemap/basemapMount'
 import { drawAttribution, drawPlaceNames } from './placeNames'
 import { FPS_WINDOW_MS, applyTuneKey, tuneOverlayText } from './tuneOverlay'
+import { createCoalescedRunner } from './resizeCoalescer'
 
 let localAreas: LocalAreasFile | null = null
 try {
@@ -456,7 +457,15 @@ export default function WakeCanvas() {
     const resize = () => {
       canvas.width = globalThis.innerWidth
       canvas.height = globalThis.innerHeight
-      basemapRef.current?.resize(canvas.width, canvas.height)
+      // map.resize() (inside handle.resize), then the camera re-fitted to
+      // the CURRENT runtime view at the new size -- after a pan or a zoom
+      // that is viewRef, not the area the map was mounted with.
+      const handle = basemapRef.current
+      if (handle !== null) {
+        handle.resize(canvas.width, canvas.height)
+        const view = viewRef.current
+        handle.setView(view.centerLat, view.centerLon, view.radiusNm)
+      }
       clearFrame()
     }
 
@@ -563,12 +572,50 @@ export default function WakeCanvas() {
       animationId = requestAnimationFrame(loop)
     }
 
+    // Every way the page's size can change goes through ONE coalesced
+    // resize on the next frame. The ResizeObserver on the basemap
+    // container (the canvas when there is no basemap) is the primary
+    // signal, because it reports the box the map actually has to fill; the
+    // window and visual-viewport resize events are fallbacks for browsers
+    // that deliver a zoom as one and not the other. Browser zoom also
+    // changes devicePixelRatio, and MapLibre reads that only inside
+    // map.resize(), so a ratio change with no size change (a window moved
+    // to a screen with a different ratio) is watched for as well.
+    const resizeRunner = createCoalescedRunner(resize, {
+      request: (callback) => requestAnimationFrame(callback),
+      cancel: (id) => cancelAnimationFrame(id),
+    })
+    const scheduleResize = () => resizeRunner.schedule()
+
+    const resizeObserver = new ResizeObserver(scheduleResize)
+    resizeObserver.observe(mapContainer ?? canvas)
+    const viewport = globalThis.visualViewport
+
+    // A resolution media query matches ONE ratio, so it is re-armed for the
+    // new ratio each time it fires.
+    let pixelRatioQuery: MediaQueryList | null = null
+    const onPixelRatioChange = () => {
+      scheduleResize()
+      watchPixelRatio()
+    }
+    const watchPixelRatio = () => {
+      pixelRatioQuery?.removeEventListener('change', onPixelRatioChange)
+      pixelRatioQuery = globalThis.matchMedia(`(resolution: ${globalThis.devicePixelRatio}dppx)`)
+      pixelRatioQuery.addEventListener('change', onPixelRatioChange)
+    }
+
     resize()
-    globalThis.addEventListener('resize', resize)
+    globalThis.addEventListener('resize', scheduleResize)
+    viewport?.addEventListener('resize', scheduleResize)
+    watchPixelRatio()
     animationId = requestAnimationFrame(loop)
 
     return () => {
-      globalThis.removeEventListener('resize', resize)
+      resizeObserver.disconnect()
+      globalThis.removeEventListener('resize', scheduleResize)
+      viewport?.removeEventListener('resize', scheduleResize)
+      pixelRatioQuery?.removeEventListener('change', onPixelRatioChange)
+      resizeRunner.dispose()
       cancelAnimationFrame(animationId)
       basemapRef.current?.destroy()
       basemapRef.current = null
@@ -584,14 +631,15 @@ export default function WakeCanvas() {
           was the constraint: this adds a sibling underneath rather than
           restructuring how the canvas mounts. Rendered only when this area
           has a tile extract, so nothing extra exists in the DOM
-          otherwise. */}
+          otherwise. Sized to the viewport by CSS alone (fixed, inset 0,
+          100% by 100%), never in pixels, so the box always matches the
+          window and the resize effect above only has to tell MapLibre. */}
       {BASEMAP_AREA !== undefined && (
         <div
           ref={mapContainerRef}
           style={{
             position: 'fixed',
-            top: 0,
-            left: 0,
+            inset: 0,
             width: '100%',
             height: '100%',
             backgroundColor: '#000000',
