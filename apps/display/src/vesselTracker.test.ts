@@ -1232,6 +1232,57 @@ function buildLongTrack(mmsi: string): { state: VesselState; nowMs: number } {
   assert(ctx._fillCount() === 1, `sweep-off: sweepPeriodSec 0 draws on the first frame (got ${ctx._fillCount()} fills)`)
 }
 
+// Scenario: the S key switching the sweep off mid-sweep. A vessel the beam
+// has NOT reached yet (bearing 90, beam at 80 -- the reveal scenario's
+// fixture) must be drawn on the very next frame once the period is 0,
+// without waiting for any beam.
+{
+  const tracked = createTrackedVesselMap()
+  const clientState = new Map<string, ClientVesselEntry>()
+  onFixArrived(tracked, fix('SWEEPKEY1', 51.1, 1.5, 0, 0))
+
+  const ctxOn = createMockCtx()
+  renderFrame(tracked, clientState, ctxOn, baseRenderContext({
+    nowMs: 80000,
+    config: { ...DEFAULT_CONFIG, legendEnabled: false, rangeRingsEnabled: false, sweepPeriodSec: 360 },
+  }))
+  assert(ctxOn._fillCount() === 0, `sweep-switched-off: not yet revealed while the beam is at 80 (got ${ctxOn._fillCount()} fills)`)
+
+  const ctxOff = createMockCtx()
+  renderFrame(tracked, clientState, ctxOff, baseRenderContext({
+    nowMs: 80016,
+    config: { ...DEFAULT_CONFIG, legendEnabled: false, rangeRingsEnabled: false, sweepPeriodSec: 0 },
+  }))
+  assert(ctxOff._fillCount() === 1, `sweep-switched-off: drawn on the first frame after the period becomes 0 (got ${ctxOff._fillCount()} fills)`)
+}
+
+// Scenario: no sweep wedge is drawn when the period is 0. drawSweep is the
+// only caller of createConicGradient and clip in renderFrame with rings
+// and the legend off, so both counts are clean; the period-10 frame is
+// the control that shows the counts do move when the sweep is drawn.
+{
+  const tracked = createTrackedVesselMap()
+  const clientState = new Map<string, ClientVesselEntry>()
+
+  const ctxOff = createMockCtx()
+  renderFrame(tracked, clientState, ctxOff, baseRenderContext({
+    config: { ...DEFAULT_CONFIG, legendEnabled: false, rangeRingsEnabled: false, areaTitleEnabled: false, sweepPeriodSec: 0 },
+  }))
+  assert(
+    ctxOff._conicGradientCount() === 0 && ctxOff._clipCount() === 0,
+    `sweep-period-0: no sweep wedge drawn (got ${ctxOff._conicGradientCount()} conic gradients, ${ctxOff._clipCount()} clips)`,
+  )
+
+  const ctxOn = createMockCtx()
+  renderFrame(tracked, clientState, ctxOn, baseRenderContext({
+    config: { ...DEFAULT_CONFIG, legendEnabled: false, rangeRingsEnabled: false, areaTitleEnabled: false, sweepPeriodSec: 10 },
+  }))
+  assert(
+    ctxOn._conicGradientCount() === 1,
+    `sweep-period-10: the control frame does draw the wedge (got ${ctxOn._conicGradientCount()} conic gradients)`,
+  )
+}
+
 // Scenario: VIS-7 a pruned vessel that returns must be revealed again.
 // Same due-east fixture as the reveal scenario above, in a fresh tracked
 // map: reveal it, let it expire (pruned from tracked), then reintroduce

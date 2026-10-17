@@ -60,7 +60,9 @@ export interface DisplayConfig {
   labelSize: (typeof LABEL_SIZES)[number]  // default: 'M' (VIS-7)
   areaTitleEnabled: boolean  // default: true (VIS-7)
   unknownScale: (typeof UNKNOWN_SCALES)[number]  // default: 0.6 (VIS-7, chosen at the ceiling look 17 September 2026)
-  sweepPeriodSec: (typeof SWEEP_PERIODS)[number]  // default: 10 (VIS-7; 0 = off)
+  // default: 10 (VIS-7; 0 = off). A plain number since ?sweep= can start
+  // it at any period from 1 to 60; the tune key B still cycles SWEEP_PERIODS.
+  sweepPeriodSec: number
   stoppedAsDot: boolean     // default: true (VIS-8)
   legendEnabled: boolean    // default: true (VIS-8)
   // VIS-9 chose these three at the ship ceiling look on 20 September 2026,

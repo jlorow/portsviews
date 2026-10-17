@@ -9,10 +9,13 @@ import {
   applyDrag,
   parseLocalAreas,
   parsePort,
+  parseSweepParam,
   radiusStepsFor,
   resolveArea,
   basemapFor,
   stepRadius,
+  sweepKeyAction,
+  toggleSweep,
   zoomKeyAction,
   type DemoAreaKey,
   type DisplayConfig,
@@ -88,6 +91,15 @@ const PROJ_CONFIG = { mirrorX: DEFAULT_CONFIG.mirrorX, rotationDeg: DEFAULT_CONF
 // load, same pattern as AREA_KEY -- this component only ever mounts once.
 const TUNE_MODE = new URLSearchParams(globalThis.location.search).get('tune') === '1'
 
+// ?sweep=off (or 0) starts with the radar sweep off, ?sweep=N at a period
+// of N seconds; missing, "on" or anything unreadable keeps DEFAULT_CONFIG's.
+// Read once at module load, like TUNE_MODE.
+const INITIAL_SWEEP_PERIOD_SEC = parseSweepParam(globalThis.location.search)
+const INITIAL_CONFIG: DisplayConfig =
+  INITIAL_SWEEP_PERIOD_SEC === undefined
+    ? DEFAULT_CONFIG
+    : { ...DEFAULT_CONFIG, sweepPeriodSec: INITIAL_SWEEP_PERIOD_SEC }
+
 // The runtime view: where the display is looking and how far out. One ref,
 // read every frame by every consumer, so a pan or a zoom needs no React
 // re-render and no second copy of the centre anywhere.
@@ -156,7 +168,13 @@ export default function WakeCanvas() {
   // mutate directly (never DEFAULT_CONFIG itself, never persisted). A
   // ref, not state -- the render loop reads it every frame already and
   // doesn't need a re-render to pick a change up.
-  const configRef = useRef<DisplayConfig>(DEFAULT_CONFIG)
+  const configRef = useRef<DisplayConfig>(INITIAL_CONFIG)
+  // The last sweep period above 0, so S brings back whatever was running
+  // -- including a period chosen with the tune key B. Undefined until one
+  // is known; toggleSweep then falls back to its own default.
+  const lastSweepPeriodRef = useRef<number | undefined>(
+    INITIAL_CONFIG.sweepPeriodSec > 0 ? INITIAL_CONFIG.sweepPeriodSec : undefined,
+  )
   // VIS-9 part 2: null until the first FPS window has closed, so the
   // overlay can say "--" rather than a literal 0 that reads as a crash.
   const fpsRef = useRef<number | null>(null)
@@ -211,10 +229,37 @@ export default function WakeCanvas() {
 
     const handleKeyDown = (event: KeyboardEvent) => {
       configRef.current = applyTuneKey(configRef.current, event)
+      // Keep S in step with B: a period B picks is the one S returns to.
+      if (configRef.current.sweepPeriodSec > 0) lastSweepPeriodRef.current = configRef.current.sweepPeriodSec
     }
 
     globalThis.addEventListener('keydown', handleKeyDown)
     return () => globalThis.removeEventListener('keydown', handleKeyDown)
+  }, [])
+
+  // S switches the radar sweep off and on, in every mode -- not only
+  // ?tune=1. Off is a period of 0, which renderFrame already treats as
+  // "reveal every vessel now", so turning it off shows every ship at once.
+  useEffect(() => {
+    const handleSweepKeyDown = (event: KeyboardEvent) => {
+      const action = sweepKeyAction({
+        key: event.key,
+        repeat: event.repeat,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        targetIsEditable: targetIsEditable(event.target),
+      })
+      if (action === null) return
+
+      event.preventDefault()
+      const result = toggleSweep(configRef.current.sweepPeriodSec, lastSweepPeriodRef.current)
+      lastSweepPeriodRef.current = result.lastNonZeroSec
+      configRef.current = { ...configRef.current, sweepPeriodSec: result.periodSec }
+    }
+
+    globalThis.addEventListener('keydown', handleSweepKeyDown)
+    return () => globalThis.removeEventListener('keydown', handleSweepKeyDown)
   }, [])
 
   // Zoom keys, arrow keys and the mouse wheel. All three move viewRef and

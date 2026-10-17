@@ -220,6 +220,7 @@ centre. Ctrl, Alt and Cmd combinations are ignored so the browser's own zoom
 still works. Pinch zoom is not supported yet. Add `?tune=1` for the tuning keys
 and the view status line, which reads e.g. `View 5nm N+1.2 E-0.4`: the current
 radius and how far the centre has been moved from the area's centre.
+S switches the radar sweep off and on; open the page with ?sweep=off to start without it.
 
 ## What you will see
 
