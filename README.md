@@ -298,7 +298,7 @@ announcement will go first.
 ## How it is put together
 
 ```
-apps/display/   the renderer — React and a 2D canvas, drawn 60 times a second
+apps/display/   the renderer — React and a 2D canvas, redrawn every frame
 server/         connects to the AIS feed, normalises messages, broadcasts them
 shared/         the projection maths, vessel state and configuration both use
 ```
