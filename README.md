@@ -5,6 +5,8 @@ reports that vessels broadcast continuously over public radio and draws them —
 hull shape by vessel type, a wake behind each one, the largest ships named — on
 any screen or projector you already own.
 
+Demo (a real recording, replayed) and project site: https://portsviews.app
+
 It is free and open source. There is no account, no subscription and nothing to
 pay. You need one free API key and about ten minutes.
 
@@ -319,7 +321,8 @@ Type-check a package with `pnpm --filter display tsc --noEmit` or
 Portsviews is free and open source and made by one person. If it is useful to
 you, you can support it through GitHub Sponsors:
 https://github.com/sponsors/jlorow. Bug reports, ideas and pull requests are
-just as welcome; see CONTRIBUTING.md.
+just as welcome; see CONTRIBUTING.md. How contributions are used, and what
+has been raised and spent: https://portsviews.app/support.html
 
 ## License
 
