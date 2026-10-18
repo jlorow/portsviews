@@ -285,18 +285,15 @@ broadcast, and position reports arrive every couple of minutes per ship.
 Bug reports, ideas and pull requests are welcome — see
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## The kit
+## HarborScope (planned)
 
-Building this yourself means an evening of setup and a computer left running.
-Not everyone wants that. A ready-made kit is coming — a small computer, a radio
-receiver and antenna, and the software already installed and pointed at your
-coast. Plug it in, point it at a wall, and it runs.
+HarborScope is the planned physical version of Portsviews: a dedicated display
+that shows live ship traffic in your space. It is at the prototype stage. There
+is no price, no date and nothing for sale. The design is not final.
 
-It does not exist yet. There is no price and no date, and it will be
-crowdfunded publicly when it is real.
-
-**Star or watch this repository** to hear about it — that is where the
-announcement will go first.
+Updates: join the waitlist at https://portsviews.app. Contributions toward the
+first prototype are voluntary support, not a preorder:
+https://portsviews.app/support.html
 
 ## How it is put together
 
