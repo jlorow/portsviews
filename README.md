@@ -15,6 +15,8 @@ pay. You need one free API key and about ten minutes.
 *A real frame from the display. The image is mirrored left-to-right, because the
 display is designed to be bounced off a mirror onto a ceiling.*
 
+For a wall screen or a screen lying flat on a table, open the page with ?mirror=off (for example http://localhost:5173/?mirror=off) to show the map the right way round.
+
 ## What you need
 
 - **Node.js 20 or newer.** Check with `node --version`.
@@ -223,6 +225,7 @@ still works. Pinch zoom is not supported yet. Add `?tune=1` for the tuning keys
 and the view status line, which reads e.g. `View 5nm N+1.2 E-0.4`: the current
 radius and how far the centre has been moved from the area's centre.
 S switches the radar sweep off and on; open the page with ?sweep=off to start without it.
+Open the page with ?mirror=off to show the map the right way round on a wall or table screen.
 
 ## What you will see
 
