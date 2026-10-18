@@ -8,6 +8,7 @@ import {
   applyWheelAtPointer,
   applyDrag,
   parseLocalAreas,
+  parseMirrorParam,
   parsePort,
   parseSweepParam,
   radiusStepsFor,
@@ -84,7 +85,13 @@ const FEED_BOX = AREA.boundingBoxes
 // The mirror is not a second flag the basemap keeps in step with
 // DEFAULT_CONFIG -- it is the same object, and basemapContainerTransform
 // derives `scaleX(-1)` from the same `mirrorX` mapProject reads.
-const PROJ_CONFIG = { mirrorX: DEFAULT_CONFIG.mirrorX, rotationDeg: DEFAULT_CONFIG.rotationDeg }
+// ?mirror=off (or 0, or false) turns the mirror off for a wall screen or a
+// screen lying flat on a table; missing, "on" or anything unreadable keeps
+// DEFAULT_CONFIG's. Read once at module load, like TUNE_MODE.
+const PROJ_CONFIG = {
+  mirrorX: parseMirrorParam(new URLSearchParams(globalThis.location.search).get('mirror')),
+  rotationDeg: DEFAULT_CONFIG.rotationDeg,
+}
 
 // VIS-6: ?tune=1 enables an on-screen toggle overlay for heroes/glow/
 // rings/hero-size, for the ceiling look session. Read once at module
@@ -93,12 +100,14 @@ const TUNE_MODE = new URLSearchParams(globalThis.location.search).get('tune') ==
 
 // ?sweep=off (or 0) starts with the radar sweep off, ?sweep=N at a period
 // of N seconds; missing, "on" or anything unreadable keeps DEFAULT_CONFIG's.
-// Read once at module load, like TUNE_MODE.
+// Read once at module load, like TUNE_MODE. mirrorX is copied from
+// PROJ_CONFIG so the runtime config never disagrees with the projection.
 const INITIAL_SWEEP_PERIOD_SEC = parseSweepParam(globalThis.location.search)
-const INITIAL_CONFIG: DisplayConfig =
-  INITIAL_SWEEP_PERIOD_SEC === undefined
-    ? DEFAULT_CONFIG
-    : { ...DEFAULT_CONFIG, sweepPeriodSec: INITIAL_SWEEP_PERIOD_SEC }
+const INITIAL_CONFIG: DisplayConfig = {
+  ...DEFAULT_CONFIG,
+  mirrorX: PROJ_CONFIG.mirrorX,
+  sweepPeriodSec: INITIAL_SWEEP_PERIOD_SEC ?? DEFAULT_CONFIG.sweepPeriodSec,
+}
 
 // The runtime view: where the display is looking and how far out. One ref,
 // read every frame by every consumer, so a pan or a zoom needs no React

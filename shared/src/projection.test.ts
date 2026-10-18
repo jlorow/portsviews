@@ -1,4 +1,5 @@
 import { mapProject, skyProject, screenHeadingDeg } from './projection.ts'
+import { parseMirrorParam } from './mirrorParam.ts'
 
 let passCount = 0
 let failCount = 0
@@ -238,6 +239,33 @@ test(
   'screenHeadingDeg fallback: vessel outside radiusNm falls back to config-transformed cogDeg',
   Math.abs(fallbackHeading - 325) <= 0.01,
   `got ${fallbackHeading.toFixed(4)}`,
+)
+
+// ── ?mirror=off: the picture the right way round ──
+// The config WakeCanvas builds from ?mirror=off.
+
+const mirrorOff = { mirrorX: parseMirrorParam('off'), rotationDeg: 0 }
+test('mirror off: ?mirror=off gives mirrorX false', mirrorOff.mirrorX === false)
+
+const eastOff = mapProject(51.0, 1.5, centerLat, centerLon, radiusNm, mirrorOff, canvasWidth, canvasHeight)
+test(
+  'mirror off: mapProject puts a point east of centre right of centre (x > 960)',
+  eastOff !== null && eastOff.x > canvasWidth / 2,
+  eastOff ? `got x=${eastOff.x.toFixed(2)}` : 'got null',
+)
+
+const westOff = mapProject(51.0, 0.5, centerLat, centerLon, radiusNm, mirrorOff, canvasWidth, canvasHeight)
+test(
+  'mirror off: mapProject puts a point west of centre left of centre (x < 960)',
+  westOff !== null && westOff.x < canvasWidth / 2,
+  westOff ? `got x=${westOff.x.toFixed(2)}` : 'got null',
+)
+
+const cog90Off = screenHeadingDeg(centerLat, centerLon, 90, centerLat, centerLon, radiusNm, mirrorOff, canvasWidth, canvasHeight)
+test(
+  'mirror off: screenHeadingDeg COG 90 points right on screen (90 deg from screen-up)',
+  Math.abs(cog90Off - 90) < 0.5,
+  `got ${cog90Off.toFixed(4)}`,
 )
 
 // ── Summary ──

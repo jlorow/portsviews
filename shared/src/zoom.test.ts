@@ -598,5 +598,51 @@ for (const [box, view, label] of [
   )
 }
 
+// --- ?mirror=off: the picture the right way round -------------------------
+// The config WakeCanvas builds from ?mirror=off. Every case below checks a
+// direction a viewer would see, not only a round trip.
+
+import { parseMirrorParam } from './mirrorParam.ts'
+
+{
+  const config = { mirrorX: parseMirrorParam('off'), rotationDeg: 0 }
+  const w = 1920, h = 1080
+  const view: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 5 }
+  assert(config.mirrorX === false, 'mirror off: ?mirror=off gives mirrorX false')
+
+  // A pixel right of the canvas centre is EAST of the view centre.
+  const rightOfCentre = unproject(1200, 540, view.centerLat, view.centerLon, view.radiusNm, config, w, h)
+  assert(rightOfCentre.lon > view.centerLon, `mirror off: a pixel right of centre is east (lon ${rightOfCentre.lon.toFixed(5)} > ${view.centerLon})`)
+
+  // Right arrow shows more of the east: the centre moves east, and left moves it west.
+  const arrow = (key: string) =>
+    handlePanKeydown(view, { key, repeat: false, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, targetIsEditable: false }, DOVER_BOX, config)
+  const right = arrow('ArrowRight')
+  const left = arrow('ArrowLeft')
+  assert(right.handled && right.view.centerLon > view.centerLon, `mirror off: ArrowRight moves the centre east (lon ${right.view.centerLon.toFixed(5)})`)
+  assert(left.handled && left.view.centerLon < view.centerLon, `mirror off: ArrowLeft moves the centre west (lon ${left.view.centerLon.toFixed(5)})`)
+
+  // Dragging right moves the map WITH the pointer: the point that was under
+  // the start pixel is now under the end pixel, so the centre moves west.
+  const from = { x: 800, y: 540 }
+  const to = { x: 900, y: 540 }
+  const dragged = applyDrag(view, from, to, DOVER_BOX, config, w, h)
+  const anchor = unproject(from.x, from.y, view.centerLat, view.centerLon, view.radiusNm, config, w, h)
+  const afterPx = mapProjectUnclipped(anchor.lat, anchor.lon, dragged.centerLat, dragged.centerLon, dragged.radiusNm, config, w, h)
+  const dragDist = Math.hypot(afterPx.x - to.x, afterPx.y - to.y)
+  assert(dragDist < 0.5, `mirror off: drag right 100px keeps the grabbed point under the pointer (dist=${dragDist.toFixed(4)}px)`)
+  assert(dragged.centerLon < view.centerLon, `mirror off: drag right moves the centre west (lon ${dragged.centerLon.toFixed(5)})`)
+
+  // Wheel zoom stays centred on the pointer, off-centre on both sides.
+  for (const [px, py] of [[1500, 300], [300, 800]] as [number, number][]) {
+    const wheelView: PointerView = { centerLat: 51.1, centerLon: 1.45, radiusNm: 20 }
+    const before = unproject(px, py, wheelView.centerLat, wheelView.centerLon, wheelView.radiusNm, config, w, h)
+    const zoomed = zoomAtPoint(wheelView, 10, px, py, config, w, h)
+    const after = mapProjectUnclipped(before.lat, before.lon, zoomed.centerLat, zoomed.centerLon, zoomed.radiusNm, config, w, h)
+    const dist = Math.hypot(after.x - px, after.y - py)
+    assert(dist < 0.5, `mirror off: wheel zoom keeps the point under the pointer at (${px},${py}) fixed (dist=${dist.toFixed(4)}px)`)
+  }
+}
+
 console.log(`${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1
