@@ -303,9 +303,11 @@ export function createBroadcastServer(
           },
         },
   )
-  // ws re-emits the http server's 'error' on itself (websocket-server.js's
-  // addListeners). The http server's listener above already handled it,
-  // so this one only stops that re-emit from throwing a second time.
+  // ws re-emits the http server's errors on itself (websocket-server.js's
+  // addListeners). The http server's listener above already handles a
+  // failed bind, so this one logs the error once instead of letting the
+  // re-emit throw. A failed bind can therefore print one extra
+  // "WebSocket server error" line after the port-in-use message.
   wss.on('error', (err: Error) => {
     console.error(`[Wake] WebSocket server error: ${err.message}`)
   })
