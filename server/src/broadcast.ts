@@ -306,7 +306,9 @@ export function createBroadcastServer(
   // ws re-emits the http server's 'error' on itself (websocket-server.js's
   // addListeners). The http server's listener above already handled it,
   // so this one only stops that re-emit from throwing a second time.
-  wss.on('error', () => {})
+  wss.on('error', (err: Error) => {
+    console.error(`[Wake] WebSocket server error: ${err.message}`)
+  })
 
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws)

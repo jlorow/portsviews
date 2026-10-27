@@ -261,6 +261,177 @@ const EXPECTED_DEFAULT_SUBSCRIPTION =
   client.stopReconnecting()
 }
 
+// --- D1 scenarios: error replies from the AIS source, and the key trim ---
+//
+// console.error and console.log are captured while each scenario runs and
+// restored before its asserts, so the [Pass] lines still print. Every
+// captured line is also kept in allCaptured for the last check (S-g).
+
+const FAKE_KEY = 'fake-key-123'
+const REFUSAL_PREFIX = '[Wake] The AIS source refused the subscription: '
+const allCaptured: string[] = []
+
+function captureConsole(): { errors: string[]; restore: () => void } {
+  const errors: string[] = []
+  const originalError = console.error
+  const originalLog = console.log
+  console.error = (...args: unknown[]) => {
+    const line = args.map((arg) => String(arg)).join(' ')
+    errors.push(line)
+    allCaptured.push(line)
+  }
+  console.log = (...args: unknown[]) => {
+    allCaptured.push(args.map((arg) => String(arg)).join(' '))
+  }
+  return {
+    errors,
+    restore: () => {
+      console.error = originalError
+      console.log = originalLog
+    },
+  }
+}
+
+function refusalLines(errors: string[]): string[] {
+  return errors.filter((line) => line.startsWith(REFUSAL_PREFIX))
+}
+
+const TEST_SUBSCRIPTION = { boundingBoxes: [[[1, 1], [2, 2]]], filterMessageTypes: ['PositionReport'] }
+
+// S-a: one error reply after 'open' is logged once and never reaches onMessage.
+{
+  const output = captureConsole()
+  const mock = new MockSocket()
+  let delivered = 0
+  const client = new AisStreamClient(FAKE_KEY, TEST_SUBSCRIPTION, { onMessage: () => delivered++ }, undefined, () => mock)
+  client.connect()
+  mock.fire('open')
+  mock.fire('message', Buffer.from('{"error":"Api Key Is Not Valid"}'))
+  client.stopReconnecting()
+  output.restore()
+
+  assert(output.errors.length === 1, `S-a: exactly one console.error line (got ${output.errors.length})`)
+  assert(
+    output.errors[0]?.startsWith(REFUSAL_PREFIX + 'Api Key Is Not Valid') === true,
+    `S-a: the line names the refusal (got ${JSON.stringify(output.errors[0])})`,
+  )
+  assert(delivered === 0, `S-a: onMessage not called (got ${delivered})`)
+}
+
+// S-b: twice on one connection is logged once; a new connect() on the same
+// client logs it again once. The second connect() is called directly (the
+// factory hands out a fresh mock), so no reconnect timer is needed.
+{
+  const output = captureConsole()
+  const mocks: MockSocket[] = []
+  const client = new AisStreamClient(FAKE_KEY, TEST_SUBSCRIPTION, { onMessage: () => {} }, undefined, () => {
+    const mock = new MockSocket()
+    mocks.push(mock)
+    return mock
+  })
+  client.connect()
+  mocks[0].fire('message', Buffer.from('{"error":"Api Key Is Not Valid"}'))
+  mocks[0].fire('message', Buffer.from('{"error":"Api Key Is Not Valid"}'))
+  const afterFirstConnection = refusalLines(output.errors).length
+  client.connect()
+  mocks[1].fire('message', Buffer.from('{"error":"Api Key Is Not Valid"}'))
+  mocks[1].fire('message', Buffer.from('{"error":"Api Key Is Not Valid"}'))
+  const afterSecondConnection = refusalLines(output.errors).length
+  client.stopReconnecting()
+  output.restore()
+
+  assert(afterFirstConnection === 1, `S-b: two replies on one connection log once (got ${afterFirstConnection})`)
+  assert(mocks.length === 2, `S-b: the second connect() opened a new socket (got ${mocks.length})`)
+  assert(afterSecondConnection === 2, `S-b: a new connect() logs it again, once (total ${afterSecondConnection})`)
+}
+
+// S-c: a key echoed back in the error text is masked.
+{
+  const output = captureConsole()
+  const mock = new MockSocket()
+  const client = new AisStreamClient(FAKE_KEY, TEST_SUBSCRIPTION, { onMessage: () => {} }, undefined, () => mock)
+  client.connect()
+  mock.fire('message', Buffer.from(JSON.stringify({ error: `bad key ${FAKE_KEY}` })))
+  client.stopReconnecting()
+  output.restore()
+
+  const line = refusalLines(output.errors)[0] ?? ''
+  assert(line.includes('<key>'), 'S-c: the logged line shows <key> in place of the key')
+  assert(!line.includes(FAKE_KEY), 'S-c: the logged line does not contain the key')
+}
+
+// S-d: a long error text with line breaks is one line of at most 200 characters.
+{
+  const output = captureConsole()
+  const mock = new MockSocket()
+  const client = new AisStreamClient(FAKE_KEY, TEST_SUBSCRIPTION, { onMessage: () => {} }, undefined, () => mock)
+  const longText = ('line one\nline two\r\n' + 'x'.repeat(30) + '\r').repeat(12).slice(0, 500)
+  client.connect()
+  mock.fire('message', Buffer.from(JSON.stringify({ error: longText })))
+  client.stopReconnecting()
+  output.restore()
+
+  assert(longText.length === 500, `S-d: the test text is 500 characters (got ${longText.length})`)
+  const line = refusalLines(output.errors)[0] ?? ''
+  const textPart = line.slice(REFUSAL_PREFIX.length)
+  assert(line.startsWith(REFUSAL_PREFIX), 'S-d: the refusal was logged')
+  assert(textPart.length > 0 && textPart.length <= 200, `S-d: the text part is at most 200 characters (got ${textPart.length})`)
+  assert(!/[\r\n]/.test(line), 'S-d: the logged line has no line breaks')
+}
+
+// S-e: a padded key, built the way Scenario 1 builds it, is sent trimmed.
+{
+  const output = captureConsole()
+  process.env.AISSTREAM_API_KEY = `  ${FAKE_KEY} \n`
+  const mock = new MockSocket()
+  const client = createAisStreamClient(
+    { boundingBoxes: [[[51.4, 0.9], [50.8, 2.0]]], filterMessageTypes: ['PositionReport', 'StandardClassBPositionReport', 'ShipStaticData'] },
+    { onMessage: () => {} },
+    undefined,
+    (_url, _options) => mock,
+  )
+  client.connect()
+  mock.fire('open')
+  client.stopReconnecting()
+  output.restore()
+
+  const sentKey = (JSON.parse(mock.sent[0] ?? '{}') as { APIKey?: unknown }).APIKey
+  assert(sentKey === FAKE_KEY, 'S-e: the subscription carries the key with the padding trimmed')
+}
+
+// S-f: ordinary messages, and an "Error" field on a message that has a
+// MessageType, still reach onMessage as before.
+{
+  const output = captureConsole()
+  const mock = new MockSocket()
+  const delivered: Array<{ MessageType?: unknown }> = []
+  const client = new AisStreamClient(
+    FAKE_KEY,
+    TEST_SUBSCRIPTION,
+    { onMessage: (message) => delivered.push(message) },
+    undefined,
+    () => mock,
+  )
+  client.connect()
+  mock.fire('open')
+  mock.fire('message', Buffer.from('{"MessageType":"PositionReport","MetaData":{"MMSI":123456789},"Message":{}}'))
+  mock.fire('message', Buffer.from('{"MessageType":"PositionReport","Error":"x"}'))
+  client.stopReconnecting()
+  output.restore()
+
+  assert(delivered.length === 2, `S-f: both messages reached onMessage (got ${delivered.length})`)
+  assert(delivered[0]?.MessageType === 'PositionReport', 'S-f: the PositionReport reached onMessage')
+  assert(
+    (delivered[1] as { Error?: unknown } | undefined)?.Error === 'x',
+    'S-f: the message with a MessageType and an "Error" field reached onMessage',
+  )
+  assert(refusalLines(output.errors).length === 0, 'S-f: nothing was logged as a refusal')
+}
+
+// S-g: the raw key never appeared in any console output captured above.
+assert(allCaptured.length > 0, `S-g: console output was captured (${allCaptured.length} lines)`)
+assert(!allCaptured.some((line) => line.includes(FAKE_KEY)), 'S-g: the raw key never appears in captured console output')
+
 // Summary comes last so its fail-guard covers every scenario in this
 // file, including the DEMO-1 ones above.
 const total = passed + failed

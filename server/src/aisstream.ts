@@ -99,24 +99,54 @@ export type AisSocketFactory = (url: string, options: WebSocket.ClientOptions) =
 
 const defaultSocketFactory: AisSocketFactory = (url, options) => new WebSocket(url, options)
 
+const REFUSAL_TEXT_MAX_CHARS = 200
+
+/**
+ * The text of an error reply from the AIS source: an object with no
+ * MessageType and a string "error" (or "Error") field. AISstream sends
+ * one when it rejects the subscription, then closes the connection.
+ */
+function refusalText(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.MessageType === 'string') return undefined
+  if (typeof record.error === 'string') return record.error
+  if (typeof record.Error === 'string') return record.Error
+  return undefined
+}
+
 export class AisStreamClient {
   private ws: AisSocket | undefined
   private backoffMs = BASE_BACKOFF_MS
   private healthyTimer: ReturnType<typeof setTimeout> | undefined
   private stopped = false
+  // One refusal line per connection; reset on each connect().
+  private refusalLogged = false
+  // Trimmed, so a stray space or line break from a pasted key never
+  // reaches the subscription.
+  private readonly apiKey: string
 
   constructor(
-    private readonly apiKey: string,
+    apiKey: string,
     private readonly subscription: SubscriptionConfig,
     private readonly handlers: AisStreamHandlers,
     private readonly captureLogger?: CaptureLogger,
     private readonly socketFactory: AisSocketFactory = defaultSocketFactory,
     // DEMO-1: endpoint override (aiscast). Defaults to today's URL.
     private readonly url: string = AISSTREAM_URL,
-  ) {}
+  ) {
+    this.apiKey = apiKey.trim()
+  }
 
   getSocket(): AisSocket | undefined {
     return this.ws
+  }
+
+  // One line, at most 200 characters, and never the key itself (the
+  // source may echo it back).
+  private describeRefusal(text: string): string {
+    const masked = this.apiKey === '' ? text : text.split(this.apiKey).join('<key>')
+    return masked.replace(/\r\n|\r|\n/g, ' ').slice(0, REFUSAL_TEXT_MAX_CHARS)
   }
 
   private buildSubscriptionMessage(): string {
@@ -132,6 +162,7 @@ export class AisStreamClient {
 
     const ws = this.socketFactory(this.url, { perMessageDeflate: true })
     this.ws = ws
+    this.refusalLogged = false
 
     ws.on('open', () => {
       this.handlers.onOpen?.()
@@ -162,6 +193,17 @@ export class AisStreamClient {
       // SubscriptionConfirmation, not just what onMessage below is filtered
       // down to.
       this.captureLogger?.write(parsed)
+
+      // An error reply (a rejected key, for example) used to reach
+      // onMessage silently, so the log never said why the source hung up.
+      const refusal = refusalText(parsed)
+      if (refusal !== undefined) {
+        if (!this.refusalLogged) {
+          this.refusalLogged = true
+          console.error(`[Wake] The AIS source refused the subscription: ${this.describeRefusal(refusal)}`)
+        }
+        return
+      }
 
       if (parsed.MessageType === 'SubscriptionConfirmation') {
         const confirmation = parsed.Message as { CompressionEnabled?: unknown } | undefined
@@ -267,7 +309,9 @@ export function createAisStreamClient(
 
   const url = connection?.url ?? AISSTREAM_URL
 
+  const trimmedKey = apiKey.trim()
+
   return socketFactory
-    ? new AisStreamClient(apiKey, subscription, handlers, captureLogger, socketFactory, url)
-    : new AisStreamClient(apiKey, subscription, handlers, captureLogger, defaultSocketFactory, url)
+    ? new AisStreamClient(trimmedKey, subscription, handlers, captureLogger, socketFactory, url)
+    : new AisStreamClient(trimmedKey, subscription, handlers, captureLogger, defaultSocketFactory, url)
 }
