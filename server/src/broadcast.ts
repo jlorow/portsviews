@@ -1,3 +1,4 @@
+import http from 'node:http'
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { TrackPoint, VesselFix, VesselType } from '@wake/shared'
 import type { PositionMap, StaticMap } from './caches.ts'
@@ -165,7 +166,12 @@ export function sendSnapshot(
 export interface BroadcastServerHandle {
   clients: Set<ClientSocket>
   close: () => Promise<void>
+  /** Resolves once the port is bound. Never settles if the bind fails. */
+  ready: Promise<void>
 }
+
+/** Answers one plain (non-upgrade) HTTP request. */
+export type HttpRequestHandler = (req: http.IncomingMessage, res: http.ServerResponse) => void
 
 /**
  * The port-in-use message, as a pure function so it can be asserted on
@@ -197,6 +203,23 @@ export interface BroadcastServerOptions {
    * the test process.
    */
   onPortInUse?: (report: PortInUseReport) => void
+  /**
+   * Answers plain HTTP requests on the same port (the built display, see
+   * staticFiles.ts). Without it, plain requests get exactly what ws gave
+   * them before: 426 Upgrade Required.
+   */
+  staticHandler?: HttpRequestHandler
+}
+
+// Byte for byte what ws 8's own internal http server answers a non-upgrade
+// request with (websocket-server.js, the `port` option branch).
+function respondUpgradeRequired(res: http.ServerResponse): void {
+  const body = http.STATUS_CODES[426] ?? 'Upgrade Required'
+  res.writeHead(426, {
+    'Content-Length': body.length,
+    'Content-Type': 'text/plain',
+  })
+  res.end(body)
 }
 
 const defaultPortInUse: (report: PortInUseReport) => void = () => {
@@ -216,14 +239,23 @@ export function createBroadcastServer(
   options: BroadcastServerOptions = {},
 ): BroadcastServerHandle {
   const clients: Set<ClientSocket> = new Set()
-  const wss = new WebSocketServer({ port })
   const onPortInUse = options.onPortInUse ?? defaultPortInUse
+  const staticHandler = options.staticHandler
 
-  // ws 8 re-emits the internal http server's 'error' on the WebSocketServer
-  // (websocket-server.js's addListeners), so a bind failure arrives here.
-  // Without this listener there was none at all, and Node threw the error
-  // as an uncaughtException -- the stack trace this replaces.
-  wss.on('error', (err: Error) => {
+  // One http server for the port. Plain requests go to the static handler
+  // when there is one; WebSocket upgrades on ANY path go to ws (old
+  // displays dial "/", same-origin ones dial "/ws").
+  const httpServer = http.createServer((req, res) => {
+    if (staticHandler !== undefined) {
+      staticHandler(req, res)
+      return
+    }
+    respondUpgradeRequired(res)
+  })
+
+  // A bind failure is an 'error' on the http server. Without a listener
+  // Node threw it as an uncaughtException -- the stack trace this replaces.
+  httpServer.on('error', (err: Error) => {
     const code = (err as NodeJS.ErrnoException).code
     if (code !== 'EADDRINUSE') {
       // Every other error keeps its previous behaviour exactly: rethrowing
@@ -235,6 +267,12 @@ export function createBroadcastServer(
     console.error(message)
     onPortInUse({ code: 'EADDRINUSE', port, message })
   })
+
+  const wss = new WebSocketServer({ server: httpServer })
+  // ws re-emits the http server's 'error' on itself (websocket-server.js's
+  // addListeners). The http server's listener above already handled it,
+  // so this one only stops that re-emit from throwing a second time.
+  wss.on('error', () => {})
 
   wss.on('connection', (ws: WebSocket) => {
     clients.add(ws)
@@ -251,12 +289,27 @@ export function createBroadcastServer(
   // Logged from the event rather than right after construction, so a bind
   // that fails -- the port-in-use case above -- is not announced as
   // listening a moment before it reports the port as taken.
-  wss.on('listening', () => {
-    console.log(`[Wake] Broadcast server listening on port ${port}`)
+  const ready = new Promise<void>((resolve) => {
+    httpServer.once('listening', () => {
+      console.log(`[Wake] Broadcast server listening on port ${port}`)
+      resolve()
+    })
   })
+
+  httpServer.listen(port)
 
   return {
     clients,
-    close: () => new Promise((resolve) => wss.close(() => resolve())),
+    ready,
+    // ws closes first (it waits for its clients to go), then the http
+    // server. A server that never bound reports an error to close(); it
+    // is still closed, so resolve either way.
+    close: () =>
+      new Promise((resolve) => {
+        wss.close(() => {
+          httpServer.close(() => resolve())
+          httpServer.closeIdleConnections()
+        })
+      }),
   }
 }

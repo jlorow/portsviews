@@ -6,6 +6,7 @@ import {
   DEFAULT_BROADCAST_PORT,
   DEFAULT_CONFIG,
   DEMO_AREAS,
+  isBlank,
   parsePort,
   parseAisSource,
   parseLocalAreas,
@@ -23,6 +24,7 @@ import {
 import { createPositionMap, createStaticMap } from './caches.ts'
 import { missingKeyLines } from './envHint.ts'
 import { createBroadcastServer } from './broadcast.ts'
+import { createStaticHandler } from './staticFiles.ts'
 import { processEnvelope, type PipelineContext } from './pipeline.ts'
 import { createTrackMap } from './trackBuffer.ts'
 
@@ -108,6 +110,26 @@ console.log(`[Wake] Area: ${areaKey} · ${resolvedArea.area.displayName} · Sour
 
 const area = resolvedArea.area
 
+// WAKE_STATIC_DIR: blank means the WebSocket-only server, exactly as
+// before. Set, it is the built display folder (relative to the repo root,
+// like .env), served on the same port as the live feed. A missing folder
+// or index.html refuses to start here, before the lock is taken.
+const WAKE_STATIC_DIR_RAW = process.env.WAKE_STATIC_DIR
+let staticDir: string | null = null
+if (!isBlank(WAKE_STATIC_DIR_RAW)) {
+  const resolvedStaticDir = path.resolve(repoRoot, WAKE_STATIC_DIR_RAW.trim())
+  const indexPath = path.join(resolvedStaticDir, 'index.html')
+  const isFolder = fs.existsSync(resolvedStaticDir) && fs.statSync(resolvedStaticDir).isDirectory()
+  const hasIndex = isFolder && fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()
+  if (!hasIndex) {
+    console.error(
+      `[Wake] WAKE_STATIC_DIR points to ${resolvedStaticDir}, which is not a folder with an index.html. Refusing to start.`,
+    )
+    process.exit(1)
+  }
+  staticDir = resolvedStaticDir
+}
+
 acquireLock()
 
 const HEARTBEAT_MS = 60000
@@ -120,6 +142,9 @@ if (!portResult.ok) {
   process.exit(1)
 }
 const BROADCAST_PORT = portResult.value
+if (staticDir !== null) {
+  console.log(`[Wake] Serving the display from ${staticDir} on port ${BROADCAST_PORT}`)
+}
 
 interface BoxBounds {
   minLat: number
@@ -221,7 +246,9 @@ const staticMap = createStaticMap()
 // pruned against and filled by processEnvelope; handed to the broadcast
 // server so a connecting display's snapshot carries each ship's history.
 const trackMap = createTrackMap()
-const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap, trackMap)
+const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap, trackMap, {
+  staticHandler: staticDir === null ? undefined : createStaticHandler(staticDir),
+})
 
 const pipelineCtx: PipelineContext = {
   positionMap,
