@@ -7,6 +7,11 @@ interface ImportMetaEnv {
   // WAKE_BROADCAST_PORT itself (server-side, in the same .env file) is
   // never visible to the browser bundle.
   readonly VITE_WAKE_BROADCAST_PORT?: string
+  // Optional, build only. Where the display dials: blank for the default
+  // ws://<page hostname>:<port>, "same-origin" for the page's own host at
+  // /ws (one-address hosting), or a full ws:// or wss:// address. A public
+  // address, not a credential. Always '' under pnpm dev (vite.config.ts).
+  readonly VITE_WAKE_SERVER_URL?: string
   // DEMO-1: injected by vite.config.ts's define from the repo-root .env
   // -- and ONLY WAKE_AREA; nothing else from that file reaches the
   // bundle. Unset/blank means dover; an invalid key falls back to dover

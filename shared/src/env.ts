@@ -53,6 +53,64 @@ export function parsePort(raw: string | undefined, fallback: number, name: strin
 }
 
 /**
+ * What VITE_WAKE_SERVER_URL asks for. Shared by the build (which refuses an
+ * invalid value and prints which kind it got) and the browser (which falls
+ * back to the default with a warning).
+ * - blank: the default, ws://<page hostname>:<port>
+ * - same-origin: the page's own host, path /ws (for one-address hosting)
+ * - url: a full ws:// or wss:// address with no username or password
+ */
+export type ServerUrlSetting =
+  | { kind: 'default' }
+  | { kind: 'same-origin' }
+  | { kind: 'url'; url: string }
+  | { kind: 'invalid' }
+
+export function classifyServerUrlSetting(raw: string | undefined): ServerUrlSetting {
+  if (isBlank(raw)) return { kind: 'default' }
+  const trimmed = raw.trim()
+  if (trimmed.toLowerCase() === 'same-origin') return { kind: 'same-origin' }
+  if (!/^wss?:\/\//i.test(trimmed)) return { kind: 'invalid' }
+  let parsed: URL
+  try {
+    parsed = new URL(trimmed)
+  } catch {
+    return { kind: 'invalid' }
+  }
+  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'wss:') return { kind: 'invalid' }
+  if (parsed.username !== '' || parsed.password !== '') return { kind: 'invalid' }
+  if (parsed.hostname === '') return { kind: 'invalid' }
+  return { kind: 'url', url: trimmed }
+}
+
+export const SERVER_URL_WARNING =
+  'VITE_WAKE_SERVER_URL must be blank, same-origin, or a ws:// or wss:// address; using the default.'
+
+/**
+ * The WebSocket address the display dials. Pure and browser-safe: the
+ * caller passes the page location in. The warning names the setting and
+ * never echoes the value.
+ */
+export function resolveServerUrl(
+  rawSetting: string | undefined,
+  port: number,
+  loc: { protocol: string; hostname: string; host: string },
+): { url: string; warning?: string } {
+  const fallback = `ws://${loc.hostname}:${port}`
+  const setting = classifyServerUrlSetting(rawSetting)
+  switch (setting.kind) {
+    case 'default':
+      return { url: fallback }
+    case 'same-origin':
+      return { url: `${loc.protocol === 'https:' ? 'wss' : 'ws'}://${loc.host}/ws` }
+    case 'url':
+      return { url: setting.url }
+    case 'invalid':
+      return { url: fallback, warning: SERVER_URL_WARNING }
+  }
+}
+
+/**
  * Parse a positive setting such as WAKE_REPLAY_SPEED. Blank/undefined gives
  * `fallback`; otherwise digits with an optional decimal part, greater than
  * zero. Same error discipline as parsePort: name and rule only.

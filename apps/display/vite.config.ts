@@ -2,7 +2,7 @@ import fs from 'node:fs'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
-import { DEFAULT_BROADCAST_PORT, parseLocalAreas, parsePort } from '@wake/shared'
+import { DEFAULT_BROADCAST_PORT, classifyServerUrlSetting, parseLocalAreas, parsePort } from '@wake/shared'
 
 // DEMO-1: loads ONLY WAKE_AREA from the repo-root .env and injects it as
 // one compile-time constant. The prefix argument restricts loadEnv to
@@ -18,11 +18,13 @@ import { DEFAULT_BROADCAST_PORT, parseLocalAreas, parsePort } from '@wake/shared
 // cannot be loaded here at all -- the property DEMO-1 relied on, kept
 // deliberately rather than by luck. VITE_WAKE_BROADCAST_PORT is here
 // because it is public by construction: it is the address the browser
-// dials, and Vite would expose it anyway once it is VITE_-prefixed. No
-// credential's name is in this list.
-const PUBLIC_ENV_PREFIXES = ['WAKE_AREA', 'VITE_WAKE_BROADCAST_PORT']
+// dials, and Vite would expose it anyway once it is VITE_-prefixed.
+// VITE_WAKE_SERVER_URL is here for the same reason: it is a public
+// address the browser dials (blank, same-origin, or a ws/wss URL), not a
+// credential. No credential's name is in this list.
+const PUBLIC_ENV_PREFIXES = ['WAKE_AREA', 'VITE_WAKE_BROADCAST_PORT', 'VITE_WAKE_SERVER_URL']
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   // __dirname is apps/display; the root .env lives two directories up.
   const env = loadEnv(mode, path.resolve(__dirname, '../..'), PUBLIC_ENV_PREFIXES)
   const localAreasPath = path.resolve(__dirname, '../..', 'areas.local.json')
@@ -49,6 +51,23 @@ export default defineConfig(({ mode }) => {
   }
   const broadcastPort = portResult.ok ? portResult.value : DEFAULT_BROADCAST_PORT
 
+  // The server address only matters for a build that will be hosted. The
+  // dev display (pnpm dev, command 'serve') always gets '' so it keeps
+  // dialling ws://<hostname>:<port> exactly as before. A build refuses an
+  // invalid value rather than shipping a display that cannot connect.
+  let serverUrlSetting = ''
+  if (command === 'build') {
+    const setting = classifyServerUrlSetting(env.VITE_WAKE_SERVER_URL)
+    if (setting.kind === 'invalid') {
+      throw new Error(
+        'VITE_WAKE_SERVER_URL must be blank, same-origin, or a ws:// or wss:// address with no username or password.',
+      )
+    }
+    const shown = setting.kind === 'url' ? setting.url : setting.kind
+    console.log(`[Wake] Display server address: ${shown}`)
+    serverUrlSetting = setting.kind === 'default' ? '' : setting.kind === 'url' ? setting.url : 'same-origin'
+  }
+
   return {
     plugins: [react()],
     resolve: {
@@ -67,6 +86,8 @@ export default defineConfig(({ mode }) => {
       // Always a valid port string: the same shared constant the server
       // falls back to, so the two can never disagree.
       'import.meta.env.VITE_WAKE_BROADCAST_PORT': JSON.stringify(String(broadcastPort)),
+      // '' for pnpm dev; the checked value for a build (see above).
+      'import.meta.env.VITE_WAKE_SERVER_URL': JSON.stringify(serverUrlSetting),
     }
   }
 })

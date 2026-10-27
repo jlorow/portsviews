@@ -5,7 +5,13 @@
 // fire for it, and Number('') is 0, so "unset" has to be recognised before
 // any number conversion happens. isBlank() is that one place, and parsePort
 // / parsePositiveNumber are the only two conversions built on it.
-import { DEFAULT_BROADCAST_PORT, isBlank, parsePort, parsePositiveNumber } from './env.ts'
+import {
+  DEFAULT_BROADCAST_PORT,
+  isBlank,
+  parsePort,
+  parsePositiveNumber,
+  resolveServerUrl,
+} from './env.ts'
 
 let passed = 0
 let failed = 0
@@ -165,6 +171,53 @@ for (const raw of ['0', '-1', 'abc', '1e3', 'Infinity']) {
 // isBlank() itself, asserted above; capacityCapture.test.ts asserts 60 for
 // undefined, '' and '  ' against the real parser, and envTemplate.test.ts
 // asserts it through the real parser for both templates.
+
+// --- resolveServerUrl: where the display dials ---
+
+{
+  const local = { protocol: 'http:', hostname: 'localhost', host: 'localhost:5173' }
+  for (const raw of [undefined, '', '   ']) {
+    assertEqual(
+      resolveServerUrl(raw, 8080, local),
+      { url: 'ws://localhost:8080' },
+      `resolveServerUrl(${JSON.stringify(raw)}) -> today's default address`,
+    )
+  }
+
+  const hosted = { protocol: 'https:', hostname: 'live.example.app', host: 'live.example.app' }
+  for (const raw of ['same-origin', 'SAME-ORIGIN', '  same-origin  ']) {
+    assertEqual(
+      resolveServerUrl(raw, 8080, hosted),
+      { url: 'wss://live.example.app/ws' },
+      `resolveServerUrl(${JSON.stringify(raw)}) on https -> wss on the page's own host`,
+    )
+  }
+
+  const plainLocal = { protocol: 'http:', hostname: 'localhost', host: 'localhost:8080' }
+  assertEqual(
+    resolveServerUrl('same-origin', 8080, plainLocal),
+    { url: 'ws://localhost:8080/ws' },
+    'resolveServerUrl(same-origin) on http -> ws on the page host and port',
+  )
+
+  assertEqual(
+    resolveServerUrl('wss://a.example/ws', 8080, local),
+    { url: 'wss://a.example/ws' },
+    'resolveServerUrl: a wss address is used as given',
+  )
+
+  const invalid = ['ws://user:pass@a.example', 'http://a.example', 'nonsense']
+  for (const raw of invalid) {
+    const result = resolveServerUrl(raw, 8080, local)
+    assert(
+      result.url === 'ws://localhost:8080' && typeof result.warning === 'string',
+      `resolveServerUrl(${JSON.stringify(raw)}) -> default plus a warning (got url ${JSON.stringify(result.url)})`,
+    )
+    const warning = result.warning ?? ''
+    assert(warning.includes('VITE_WAKE_SERVER_URL'), `warning for ${JSON.stringify(raw)} names the setting`)
+    assert(!warning.includes(raw), `warning for ${JSON.stringify(raw)} does not echo the value`)
+  }
+}
 
 const total = passed + failed
 if (failed === 0) {

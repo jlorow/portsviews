@@ -13,6 +13,7 @@ import {
   parseSweepParam,
   radiusStepsFor,
   resolveArea,
+  resolveServerUrl,
   basemapFor,
   stepRadius,
   sweepKeyAction,
@@ -124,6 +125,7 @@ interface WakeView {
 // shared constant the server falls back to (DEFAULT_BROADCAST_PORT), so
 // the two ends can never disagree: blank is unset, and an invalid value
 // warns once and takes the default instead of building a URL with it.
+let warnedServerUrl = false
 function buildServerUrl(): string {
   const portResult = parsePort(
     import.meta.env.VITE_WAKE_BROADCAST_PORT,
@@ -134,7 +136,14 @@ function buildServerUrl(): string {
     console.warn(`[Wake] ${portResult.error}`)
   }
   const port = portResult.ok ? portResult.value : DEFAULT_BROADCAST_PORT
-  return `ws://${globalThis.location.hostname}:${port}`
+  // VITE_WAKE_SERVER_URL (build only) can point the display at its own
+  // host instead; blank keeps the address above byte for byte.
+  const resolved = resolveServerUrl(import.meta.env.VITE_WAKE_SERVER_URL, port, globalThis.location)
+  if (resolved.warning !== undefined && !warnedServerUrl) {
+    warnedServerUrl = true
+    console.warn(`[Wake] ${resolved.warning}`)
+  }
+  return resolved.url
 }
 
 // The real browser WebSocket satisfies WakeSocketLike structurally --
