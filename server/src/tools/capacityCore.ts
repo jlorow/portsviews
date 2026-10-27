@@ -271,7 +271,7 @@ export function exitAfterStreams(params: ExitAfterStreamsParams): void {
 /**
  * True if the tool must refuse to start. Takes the check as a parameter
  * (rather than calling lock.ts's isLockHeld() directly) so a test can
- * inject a fake answer with no real filesystem or tasklist involved --
+ * inject a fake answer with no real filesystem or process check involved --
  * the real capacityCapture.ts passes lock.ts's real isLockHeld.
  */
 export function shouldRefuseStart(isHeld: () => boolean): boolean {
