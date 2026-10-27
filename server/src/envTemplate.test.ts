@@ -156,6 +156,9 @@ for (const name of [
   'WAKE_AREA',
   'WAKE_AIS_SOURCE',
   'AISCAST_TOKEN',
+  'VITE_WAKE_SERVER_URL',
+  'WAKE_STATIC_DIR',
+  'WAKE_ACCESS_PASSWORD',
 ]) {
   assert(
     !(name in template),

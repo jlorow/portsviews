@@ -258,6 +258,63 @@ the world.
 the first minute — the display only knows about a vessel once that vessel has
 broadcast, and position reports arrive every couple of minutes per ship.
 
+## Put it online (optional)
+
+You can host Portsviews so it opens from any device. One server then serves the
+page and the live ship data on a single port, behind an optional password page.
+The author's own copy runs this way on [Render](https://render.com)'s free plan.
+
+**Before you start**
+
+- Use a **second** AISstream key. One key allows one connection, and your local
+  server already uses the first.
+- Paste keys with no spaces before or after them.
+- Keep the address private. Every viewer uses your key's connection, and the
+  password page is the only thing in front of it.
+
+**Three settings** (optional; blank means off)
+
+| Setting | Value | What it does |
+|---|---|---|
+| `VITE_WAKE_SERVER_URL` | `same-origin` | Read when the display is **built**. The display connects back to the address it was loaded from (`wss://<address>/ws` on https). |
+| `WAKE_STATIC_DIR` | `apps/display/dist` | The server also serves the built display. Relative to the repo root. |
+| `WAKE_ACCESS_PASSWORD` | a long password (12+ characters) | Shows a password page before the display and the live data. Needs `WAKE_STATIC_DIR`. |
+
+**Try it on your own computer first**
+
+1. Add the three settings to `.env`.
+2. Build the display: `pnpm --filter display build`
+3. Start only the server: `pnpm --filter @wake/server start`
+4. Open http://localhost:8080 and enter the password.
+
+To go back to the normal two-terminal setup, put a `#` in front of the three
+lines again. A local build also copies every map file in
+`apps/display/public/tiles`, including your own areas.
+
+**On Render (free plan)**
+
+New → Web Service → Public Git Repository → this repository, then:
+
+- Language: Node. Branch: `main`. Instance type: Free.
+- Build command:
+  `npx --yes pnpm@12.9.1 install --frozen-lockfile && npx --yes pnpm@12.9.1 --filter display build`
+- Start command: `node_modules/.bin/tsx server/src/index.ts`
+- Health check path: `/healthz`
+- Environment variables: `NODE_VERSION` = `24`, `AISSTREAM_API_KEY` = your
+  second key, `VITE_WAKE_SERVER_URL` = `same-origin`, `WAKE_STATIC_DIR` =
+  `apps/display/dist`, `WAKE_ACCESS_PASSWORD` = your password,
+  `WAKE_BROADCAST_PORT` = `10000`
+
+**Good to know**
+
+- The free plan sleeps after 15 minutes without visitors. The next visit takes
+  about a minute to wake it, and ships fill in again over a few minutes. Each
+  restart starts the ship history again.
+- Every push to the branch Render watches redeploys the server.
+- `[Wake] The AIS source refused the subscription: …` in the log means the key
+  was rejected. After many quick retries AISstream may answer `429` for a
+  while; fix the key, and if 429 continues, pause the service for an hour.
+
 ## Status
 
 **Works today**
@@ -271,8 +328,9 @@ broadcast, and position reports arrive every couple of minutes per ship.
 
 **Known limits**
 
-- Developed and tested on Windows. macOS and Linux should work, but they are
-  untested.
+- Developed and tested on Windows. The server also runs on Linux when hosted
+  online (see "Put it online"); running the full setup on macOS or Linux
+  desktops is untested.
 - The free AISstream key allows only a few simultaneous connections, so run one
   server per key.
 - Coverage depends on volunteer receivers and varies by region.
