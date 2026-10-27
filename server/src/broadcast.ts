@@ -209,6 +209,18 @@ export interface BroadcastServerOptions {
    * them before: 426 Upgrade Required.
    */
   staticHandler?: HttpRequestHandler
+  /**
+   * The optional password page (accessGate.ts). It sees every plain
+   * request first, and every WebSocket upgrade without a valid session is
+   * refused with 401 before the connection opens.
+   */
+  accessGate?: RequestGate
+}
+
+/** What createBroadcastServer needs from accessGate.ts's AccessGate. */
+export interface RequestGate {
+  handleRequest(req: http.IncomingMessage, res: http.ServerResponse, next: () => void): void
+  allowsUpgrade(req: http.IncomingMessage): boolean
 }
 
 // Byte for byte what ws 8's own internal http server answers a non-upgrade
@@ -241,16 +253,25 @@ export function createBroadcastServer(
   const clients: Set<ClientSocket> = new Set()
   const onPortInUse = options.onPortInUse ?? defaultPortInUse
   const staticHandler = options.staticHandler
+  const accessGate = options.accessGate
 
   // One http server for the port. Plain requests go to the static handler
-  // when there is one; WebSocket upgrades on ANY path go to ws (old
-  // displays dial "/", same-origin ones dial "/ws").
-  const httpServer = http.createServer((req, res) => {
+  // when there is one (behind the password page when that is on);
+  // WebSocket upgrades on ANY path go to ws (old displays dial "/",
+  // same-origin ones dial "/ws").
+  const answer: HttpRequestHandler = (req, res) => {
     if (staticHandler !== undefined) {
       staticHandler(req, res)
       return
     }
     respondUpgradeRequired(res)
+  }
+  const httpServer = http.createServer((req, res) => {
+    if (accessGate !== undefined) {
+      accessGate.handleRequest(req, res, () => answer(req, res))
+      return
+    }
+    answer(req, res)
   })
 
   // A bind failure is an 'error' on the http server. Without a listener
@@ -268,7 +289,20 @@ export function createBroadcastServer(
     onPortInUse({ code: 'EADDRINUSE', port, message })
   })
 
-  const wss = new WebSocketServer({ server: httpServer })
+  // verifyClient rather than handleUpgrade: it works with the `server`
+  // option (handleUpgrade needs noServer and our own upgrade routing), and
+  // ws answers a refusal with a plain HTTP status before any handshake.
+  const wss = new WebSocketServer(
+    accessGate === undefined
+      ? { server: httpServer }
+      : {
+          server: httpServer,
+          verifyClient: (info, done) => {
+            if (accessGate.allowsUpgrade(info.req)) done(true)
+            else done(false, 401, 'Unauthorized')
+          },
+        },
+  )
   // ws re-emits the http server's 'error' on itself (websocket-server.js's
   // addListeners). The http server's listener above already handled it,
   // so this one only stops that re-emit from throwing a second time.

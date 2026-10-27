@@ -25,6 +25,7 @@ import { createPositionMap, createStaticMap } from './caches.ts'
 import { missingKeyLines } from './envHint.ts'
 import { createBroadcastServer } from './broadcast.ts'
 import { createStaticHandler } from './staticFiles.ts'
+import { createAccessGate } from './accessGate.ts'
 import { processEnvelope, type PipelineContext } from './pipeline.ts'
 import { createTrackMap } from './trackBuffer.ts'
 
@@ -130,6 +131,23 @@ if (!isBlank(WAKE_STATIC_DIR_RAW)) {
   staticDir = resolvedStaticDir
 }
 
+// WAKE_ACCESS_PASSWORD: blank means no password page. Set, it guards the
+// display and the live feed. Its value and length are never printed.
+const WAKE_ACCESS_PASSWORD_RAW = process.env.WAKE_ACCESS_PASSWORD
+const MIN_PASSWORD_LENGTH = 12
+let accessPassword: string | null = null
+if (!isBlank(WAKE_ACCESS_PASSWORD_RAW)) {
+  if (staticDir === null) {
+    console.error('[Wake] WAKE_ACCESS_PASSWORD needs WAKE_STATIC_DIR (the password page is served with the display).')
+    process.exit(1)
+  }
+  if (WAKE_ACCESS_PASSWORD_RAW.length < MIN_PASSWORD_LENGTH) {
+    console.error(`[Wake] WAKE_ACCESS_PASSWORD must be at least ${MIN_PASSWORD_LENGTH} characters.`)
+    process.exit(1)
+  }
+  accessPassword = WAKE_ACCESS_PASSWORD_RAW
+}
+
 acquireLock()
 
 const HEARTBEAT_MS = 60000
@@ -143,7 +161,8 @@ if (!portResult.ok) {
 }
 const BROADCAST_PORT = portResult.value
 if (staticDir !== null) {
-  console.log(`[Wake] Serving the display from ${staticDir} on port ${BROADCAST_PORT}`)
+  const passwordPage = accessPassword === null ? 'off' : 'on'
+  console.log(`[Wake] Serving the display from ${staticDir} on port ${BROADCAST_PORT}, password page ${passwordPage}`)
 }
 
 interface BoxBounds {
@@ -248,6 +267,7 @@ const staticMap = createStaticMap()
 const trackMap = createTrackMap()
 const broadcastServer = createBroadcastServer(BROADCAST_PORT, positionMap, staticMap, trackMap, {
   staticHandler: staticDir === null ? undefined : createStaticHandler(staticDir),
+  accessGate: accessPassword === null ? undefined : createAccessGate(accessPassword),
 })
 
 const pipelineCtx: PipelineContext = {
